@@ -57,10 +57,13 @@ export interface JobStatusResponse {
   iteration: number;
   qa_analyser_iteration: number;
   artifact_paths: Record<string, string>;
+  tasks: Task[];
   spec: TechnicalSpec | null;
   test_report: TestReport | null;
   history: AgentEvent[];
   cost_estimate_usd: number | null;
+  project_dir: string | null;
+  spec_dir: string | null;
 }
 
 export interface RunPipelineResponse {

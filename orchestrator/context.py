@@ -52,3 +52,5 @@ class ProjectContext(TypedDict):
     iteration:              int                # QA→Engineer retry count
     qa_analyser_iteration:  int                # QA→Analyser retry count
     status:                 str                # "running" | "done" | "failed"
+    project_dir:            Optional[str]      # e.g. "projects/hello_django"
+    spec_dir:               Optional[str]      # e.g. "projects/hello_django/spec"

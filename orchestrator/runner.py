@@ -27,6 +27,22 @@ logger = logging.getLogger(__name__)
 
 
 def _initial_state(requirement: str, job_id: str) -> ProjectContext:
+    from orchestrator.graph import _derive_project_dir, _spec_dir, _write_requirements
+    import pathlib
+    # Build a minimal stub state so _derive_project_dir can read the request
+    stub: ProjectContext = {  # type: ignore[typeddict-item]
+        "request": requirement, "job_id": job_id,
+        "tasks": [], "spec": None, "artifact_paths": {},
+        "test_report": None, "history": [],
+        "iteration": 0, "qa_analyser_iteration": 0, "status": "running",
+        "project_dir": None, "spec_dir": None,
+    }
+    project_dir = _derive_project_dir(stub)
+    spec_d      = _spec_dir(stub)
+    spec_d.mkdir(parents=True, exist_ok=True)
+    # Write 00_requirements.md immediately so it's visible before any agent runs
+    _write_requirements({**stub, "project_dir": project_dir, "spec_dir": str(spec_d)}, spec_d)  # type: ignore[arg-type]
+
     return {
         "request":               requirement,
         "job_id":                job_id,
@@ -38,6 +54,8 @@ def _initial_state(requirement: str, job_id: str) -> ProjectContext:
         "iteration":             0,
         "qa_analyser_iteration": 0,
         "status":                "running",
+        "project_dir":           project_dir,
+        "spec_dir":              str(spec_d),
     }
 
 

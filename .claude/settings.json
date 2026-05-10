@@ -1,13 +1,17 @@
 {
   "permissions": {
     "allow": [
-      "Bash(pip install *)",
-      "Bash(python -m pytest tests/ -v)",
-      "Bash(git init *)",
-      "Bash(git add *)",
-      "Bash(git commit -m ' *)",
-      "Bash(git remote *)",
-      "Bash(git push *)"
+      "Bash(*)",
+      "PowerShell(*)",
+      "Skill(update-config)",
+      "Skill(update-config:*)",
+      "mcp__ai-orchestrator__run_pipeline",
+      "mcp__ai-orchestrator__get_job_status",
+      "Read(//c/Users/ASUS/.claude/projects/**)",
+      "mcp__ai-orchestrator__cancel_job"
     ]
-  }
+  },
+  "enabledMcpjsonServers": [
+    "ai-orchestrator"
+  ]
 }

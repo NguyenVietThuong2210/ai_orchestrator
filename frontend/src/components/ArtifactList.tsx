@@ -1,28 +1,81 @@
 interface Props {
   artifactPaths: Record<string, string>;
+  specDir?: string | null;
 }
 
-export function ArtifactList({ artifactPaths }: Props) {
-  const entries = Object.entries(artifactPaths);
+const SPEC_FILES = [
+  { file: "00_requirements.md",      label: "Requirements",       icon: "📄" },
+  { file: "01_pm_tasks.md",          label: "PM Tasks",           icon: "📋" },
+  { file: "01_pm_tasks.json",        label: "PM Tasks (JSON)",    icon: "{ }" },
+  { file: "02_technical_spec.md",    label: "Technical Spec",     icon: "🔍" },
+  { file: "02_technical_spec.json",  label: "Spec (JSON)",        icon: "{ }" },
+  { file: "03_engineer_summary.md",  label: "Engineer Summary",   icon: "⚙️"  },
+  { file: "03_engineer_summary.json",label: "Engineer (JSON)",    icon: "{ }" },
+  { file: "_pipeline.json",          label: "Pipeline Manifest",  icon: "🗂"  },
+];
 
-  if (entries.length === 0) {
-    return <p className="text-sm text-gray-400">No artifacts recorded.</p>;
-  }
+export function ArtifactList({ artifactPaths, specDir }: Props) {
+  const codeEntries = Object.entries(artifactPaths);
 
   return (
-    <div>
-      <h3 className="text-xs font-semibold uppercase tracking-wider text-gray-500 mb-2">
-        Generated Files ({entries.length})
-      </h3>
-      <ul className="space-y-1">
-        {entries.map(([name, path]) => (
-          <li key={name} className="flex items-center gap-2 text-sm font-mono">
-            <span className="text-gray-400">📄</span>
-            <span className="text-blue-700 min-w-0 truncate" title={name}>{name}</span>
-            <span className="text-gray-400 text-xs truncate flex-1" title={path}>{path}</span>
-          </li>
-        ))}
-      </ul>
+    <div className="space-y-5">
+
+      {/* Spec folder */}
+      {specDir && (
+        <div>
+          <div className="flex items-center gap-2 mb-2">
+            <span className="text-base">📁</span>
+            <h3 className="text-xs font-bold uppercase tracking-wider text-gray-500">
+              Spec Folder
+            </h3>
+            <span className="text-xs font-mono text-gray-400">{specDir}</span>
+          </div>
+          <div className="rounded-lg border border-blue-100 bg-blue-50 divide-y divide-blue-100 overflow-hidden">
+            {SPEC_FILES.map(({ file, label, icon }) => (
+              <div key={file} className="flex items-center gap-2 px-3 py-1.5 text-xs">
+                <span className="text-base shrink-0">{icon}</span>
+                <span className="font-mono text-blue-800 font-medium">{file}</span>
+                <span className="text-blue-500 ml-auto">{label}</span>
+              </div>
+            ))}
+            {/* QA retries — shown generically */}
+            <div className="flex items-center gap-2 px-3 py-1.5 text-xs text-blue-400 italic">
+              <span className="text-base shrink-0">📝</span>
+              <span className="font-mono">04_qa_report[_rN].{"{json,md}"}</span>
+              <span className="ml-auto">QA Reports (per retry)</span>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Code artifacts */}
+      {codeEntries.length > 0 && (
+        <div>
+          <div className="flex items-center gap-2 mb-2">
+            <span className="text-base">📦</span>
+            <h3 className="text-xs font-bold uppercase tracking-wider text-gray-500">
+              Generated Files ({codeEntries.length})
+            </h3>
+          </div>
+          <div className="rounded-lg border border-gray-200 divide-y divide-gray-100 overflow-hidden">
+            {codeEntries.map(([name, path]) => (
+              <div key={name} className="flex items-center gap-2 px-3 py-1.5 text-xs">
+                <span className="text-base shrink-0">📄</span>
+                <span className="font-mono text-gray-800 font-medium min-w-0 truncate" title={name}>
+                  {name}
+                </span>
+                <span className="font-mono text-gray-400 ml-auto shrink-0 truncate max-w-[40%]" title={path}>
+                  {path}
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {!specDir && codeEntries.length === 0 && (
+        <p className="text-sm text-gray-400 text-center pt-8">No artifacts yet.</p>
+      )}
     </div>
   );
 }

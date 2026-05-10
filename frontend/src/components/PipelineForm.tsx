@@ -6,6 +6,7 @@ interface Props {
   onStart: (requirement: string) => void;
   onCancel: () => void;
   onReset: () => void;
+  cancelPending?: boolean;
 }
 
 const PLACEHOLDER = `Describe what you want to build…
@@ -16,7 +17,7 @@ Store all files under projects/hello_django/.
 The app must have one view at / that returns "Hello, World!"
 and must be runnable with: python manage.py runserver`;
 
-export function PipelineForm({ status, onStart, onCancel, onReset }: Props) {
+export function PipelineForm({ status, onStart, onCancel, onReset, cancelPending = false }: Props) {
   const [requirement, setRequirement] = useState("");
 
   const isActive = status === "running" || status === "starting" || status === "waiting_approval";
@@ -60,9 +61,10 @@ export function PipelineForm({ status, onStart, onCancel, onReset }: Props) {
           <button
             type="button"
             onClick={onCancel}
-            className="flex-1 px-4 py-2 rounded-lg border border-red-200 text-red-600 text-sm font-medium hover:bg-red-50 transition-colors"
+            disabled={cancelPending}
+            className="flex-1 px-4 py-2 rounded-lg border border-red-200 text-red-600 text-sm font-medium hover:bg-red-50 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
           >
-            Cancel
+            {cancelPending ? "Cancelling…" : "Cancel"}
           </button>
         ) : (
           <button

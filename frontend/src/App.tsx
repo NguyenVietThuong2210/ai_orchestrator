@@ -1,287 +1,505 @@
+import { useState, useEffect, useCallback } from "react";
 import { usePipeline } from "./hooks/usePipeline";
-import { StatusBadge } from "./components/StatusBadge";
-import { PipelineForm } from "./components/PipelineForm";
 import { AgentTimeline } from "./components/AgentTimeline";
 import { SpecReview } from "./components/SpecReview";
 import { ArtifactList } from "./components/ArtifactList";
 import { TestReport } from "./components/TestReport";
+import { PipelineForm } from "./components/PipelineForm";
+import type { PipelineStatus, Task } from "./types";
 
-function MainPanel({
-  pipeline,
-}: {
-  pipeline: ReturnType<typeof usePipeline>;
-}) {
-  const { status, jobData, sseEvents, error, approve, reject } = pipeline;
+// ── Step definitions ──────────────────────────────────────────────────────────
 
-  if (status === "idle") {
-    return (
-      <div className="flex flex-col items-center justify-center h-full text-center gap-4 text-gray-400">
-        <div className="text-6xl">🤖</div>
-        <div>
-          <p className="text-lg font-medium text-gray-600">AI Orchestrator</p>
-          <p className="text-sm mt-1">Describe what you want to build in the sidebar, then click Run.</p>
-        </div>
-        <div className="mt-4 grid grid-cols-2 gap-3 text-left max-w-md w-full">
-          {[
-            { agent: "PM", desc: "Breaks requirements into tasks" },
-            { agent: "Analyser", desc: "Writes technical spec" },
-            { agent: "Engineer", desc: "Implements the code" },
-            { agent: "QA", desc: "Validates and tests output" },
-          ].map(({ agent, desc }) => (
-            <div key={agent} className="rounded-lg border border-gray-100 bg-white p-3">
-              <p className="text-xs font-semibold text-gray-700">{agent}</p>
-              <p className="text-xs text-gray-400 mt-0.5">{desc}</p>
-            </div>
-          ))}
-        </div>
-      </div>
-    );
-  }
+const STEPS = [
+  { key: "pm",       label: "PM",       icon: "📋" },
+  { key: "analyser", label: "Analyser", icon: "🔍" },
+  { key: "gate",     label: "Review",   icon: "👤" },
+  { key: "engineer", label: "Engineer", icon: "⚙️"  },
+  { key: "qa",       label: "QA",       icon: "✅" },
+] as const;
 
-  if (status === "starting") {
-    return (
-      <div className="flex items-center justify-center h-full gap-3 text-gray-500">
-        <div className="w-5 h-5 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
-        <span className="text-sm">Starting pipeline…</span>
-      </div>
-    );
-  }
+const NODE_TO_STEP: Record<string, string> = {
+  pm: "pm", analyser: "analyser", human_gate: "gate", engineer: "engineer", qa: "qa",
+};
 
-  if (status === "running") {
-    return (
-      <div className="h-full p-6">
-        <AgentTimeline
-          history={jobData?.history ?? []}
-          sseEvents={sseEvents}
-          iteration={jobData?.iteration ?? 0}
-          qaAnalyserIteration={jobData?.qa_analyser_iteration ?? 0}
-        />
-      </div>
-    );
-  }
+const STEP_ORDER = ["pm", "analyser", "gate", "engineer", "qa"];
 
-  if (status === "waiting_approval" && jobData?.spec) {
-    return (
-      <div className="h-full p-6">
-        <SpecReview
-          spec={jobData.spec}
-          onApprove={approve}
-          onReject={reject}
-        />
-      </div>
-    );
-  }
+type StepState = "done" | "active" | "pending" | "error";
 
-  if (status === "done" && jobData) {
-    return (
-      <div className="h-full overflow-y-auto p-6 space-y-6 scrollbar-thin">
-        <div className="rounded-xl bg-green-50 border border-green-200 px-5 py-4 flex items-center gap-3">
-          <span className="text-3xl">✅</span>
-          <div>
-            <p className="font-semibold text-green-800">Pipeline Complete</p>
-            <p className="text-xs text-green-700 mt-0.5">
-              Job <span className="font-mono">{jobData.job_id}</span> finished successfully.
-              {jobData.cost_estimate_usd === 0 && " Cost: $0 (Mode B)"}
-            </p>
-          </div>
-        </div>
-
-        {jobData.test_report && (
-          <section>
-            <h2 className="text-sm font-semibold text-gray-700 mb-3">QA Report</h2>
-            <TestReport report={jobData.test_report} />
-          </section>
-        )}
-
-        {Object.keys(jobData.artifact_paths).length > 0 && (
-          <section>
-            <ArtifactList artifactPaths={jobData.artifact_paths} />
-          </section>
-        )}
-
-        {jobData.history.length > 0 && (
-          <section>
-            <h2 className="text-sm font-semibold text-gray-700 mb-3">Agent History</h2>
-            <AgentTimeline
-              history={jobData.history}
-              sseEvents={[]}
-              iteration={jobData.iteration}
-              qaAnalyserIteration={jobData.qa_analyser_iteration}
-            />
-          </section>
-        )}
-      </div>
-    );
-  }
-
+function getStepState(
+  key: string,
+  status: PipelineStatus,
+  currentNode: string | null,
+): StepState {
+  const idx = STEP_ORDER.indexOf(key);
+  if (status === "done") return "done";
   if (status === "failed") {
-    return (
-      <div className="h-full overflow-y-auto p-6 space-y-4 scrollbar-thin">
-        <div className="rounded-xl bg-red-50 border border-red-200 px-5 py-4 flex items-start gap-3">
-          <span className="text-3xl">❌</span>
-          <div>
-            <p className="font-semibold text-red-800">Pipeline Failed</p>
-            {error && (
-              <p className="text-xs text-red-700 font-mono mt-1 whitespace-pre-wrap">{error}</p>
-            )}
-          </div>
-        </div>
-
-        {jobData?.test_report && (
-          <section>
-            <h2 className="text-sm font-semibold text-gray-700 mb-3">Last QA Report</h2>
-            <TestReport report={jobData.test_report} />
-          </section>
-        )}
-
-        {jobData?.history && jobData.history.length > 0 && (
-          <section>
-            <h2 className="text-sm font-semibold text-gray-700 mb-3">Agent History</h2>
-            <AgentTimeline
-              history={jobData.history}
-              sseEvents={[]}
-              iteration={jobData.iteration}
-              qaAnalyserIteration={jobData.qa_analyser_iteration}
-            />
-          </section>
-        )}
-      </div>
-    );
+    const active = currentNode ? NODE_TO_STEP[currentNode] : null;
+    const aIdx = active ? STEP_ORDER.indexOf(active) : -1;
+    if (idx < aIdx) return "done";
+    if (idx === aIdx) return "error";
+    return "pending";
   }
-
-  return null;
+  const active =
+    status === "starting" ? "pm"
+    : status === "waiting_approval" ? "gate"
+    : currentNode ? NODE_TO_STEP[currentNode] ?? null
+    : null;
+  const aIdx = active ? STEP_ORDER.indexOf(active) : -1;
+  if (aIdx > idx) return "done";
+  if (aIdx === idx) return "active";
+  return "pending";
 }
 
-export default function App() {
-  const pipeline = usePipeline();
+// ── Pipeline flow bar ─────────────────────────────────────────────────────────
 
+function PipelineFlowBar({
+  status,
+  currentNode,
+}: {
+  status: PipelineStatus;
+  currentNode: string | null;
+}) {
   return (
-    <div className="flex flex-col h-screen bg-gray-50">
-      {/* Header */}
-      <header className="flex items-center justify-between px-6 py-3 bg-gray-900 text-white border-b border-gray-800 shrink-0">
-        <div className="flex items-center gap-3">
-          <span className="text-xl">🤖</span>
-          <span className="font-semibold tracking-tight">AI Orchestrator</span>
-          {pipeline.jobId && (
-            <span className="text-xs font-mono text-gray-400 ml-2">
-              {pipeline.jobId}
-            </span>
-          )}
-        </div>
-        <div className="flex items-center gap-4">
-          <StatusBadge status={pipeline.status} />
-          <a
-            href="/docs"
-            target="_blank"
-            className="text-xs text-gray-400 hover:text-white transition-colors"
-          >
-            API Docs ↗
-          </a>
-        </div>
-      </header>
-
-      {/* Body */}
-      <div className="flex flex-1 min-h-0">
-        {/* Sidebar */}
-        <aside className="w-72 shrink-0 bg-white border-r border-gray-100 flex flex-col p-4 gap-4 overflow-y-auto">
-          <div>
-            <p className="text-xs font-semibold uppercase tracking-wider text-gray-400 mb-3">
-              New Pipeline
-            </p>
-            <PipelineForm
-              status={pipeline.status}
-              onStart={pipeline.start}
-              onCancel={pipeline.cancel}
-              onReset={pipeline.reset}
-            />
-          </div>
-
-          {/* Pipeline step indicators */}
-          {pipeline.status !== "idle" && (
-            <div className="mt-2">
-              <p className="text-xs font-semibold uppercase tracking-wider text-gray-400 mb-2">
-                Steps
-              </p>
-              <StepIndicator
-                status={pipeline.status}
-                currentNode={pipeline.jobData?.current_node ?? null}
-              />
+    <div className="flex items-center w-full">
+      {STEPS.map(({ key, label, icon }, i) => {
+        const s = getStepState(key, status, currentNode);
+        const isLast = i === STEPS.length - 1;
+        return (
+          <div key={key} className="flex items-center flex-1 min-w-0">
+            <div className="flex flex-col items-center flex-1 min-w-0">
+              <div className={`w-8 h-8 rounded-full flex items-center justify-center text-sm border-2 transition-all
+                ${s === "done"   ? "bg-green-500 border-green-500 text-white shadow"
+                : s === "active" ? "bg-blue-500 border-blue-400 text-white shadow-lg ring-4 ring-blue-200 animate-pulse"
+                : s === "error"  ? "bg-red-500 border-red-400 text-white"
+                :                  "bg-white border-gray-200 text-gray-300"}`}>
+                {s === "done" ? "✓" : s === "error" ? "✗" : icon}
+              </div>
+              <span className={`text-[10px] mt-0.5 font-semibold tracking-wide
+                ${s === "done"   ? "text-green-600"
+                : s === "active" ? "text-blue-600"
+                : s === "error"  ? "text-red-600"
+                :                  "text-gray-400"}`}>
+                {label}
+              </span>
             </div>
-          )}
-        </aside>
+            {!isLast && (
+              <div className={`h-0.5 w-3 mx-0.5 rounded shrink-0
+                ${getStepState(STEPS[i + 1].key, status, currentNode) !== "pending" || s === "done"
+                  ? "bg-green-400" : "bg-gray-200"}`}
+              />
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
 
-        {/* Main panel */}
-        <main className="flex-1 min-w-0 overflow-hidden">
-          <MainPanel pipeline={pipeline} />
-        </main>
+// ── Status pill ───────────────────────────────────────────────────────────────
+
+function StatusPill({ status }: { status: PipelineStatus }) {
+  const cfg: Record<PipelineStatus, { label: string; cls: string }> = {
+    idle:             { label: "Idle",           cls: "bg-gray-700 text-gray-300" },
+    starting:         { label: "Starting…",      cls: "bg-blue-600 text-white animate-pulse" },
+    running:          { label: "● Running",      cls: "bg-blue-500 text-white" },
+    waiting_approval: { label: "⏸ Needs Review", cls: "bg-amber-400 text-amber-900 animate-pulse" },
+    done:             { label: "✓ Done",         cls: "bg-green-500 text-white" },
+    failed:           { label: "✗ Failed",       cls: "bg-red-500 text-white" },
+  };
+  const { label, cls } = cfg[status];
+  return <span className={`px-3 py-1 rounded-full text-xs font-bold ${cls}`}>{label}</span>;
+}
+
+// ── Copy-to-clipboard button ──────────────────────────────────────────────────
+
+function CopyButton({ text }: { text: string }) {
+  const [copied, setCopied] = useState(false);
+  const copy = useCallback(() => {
+    navigator.clipboard.writeText(text).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    });
+  }, [text]);
+  return (
+    <button
+      onClick={copy}
+      title="Copy job ID"
+      className="text-xs text-gray-500 hover:text-white transition-colors font-mono px-1.5 py-0.5 rounded hover:bg-gray-700"
+    >
+      {copied ? "✓ copied" : text.slice(0, 8) + "…"}
+    </button>
+  );
+}
+
+// ── Approve banner ────────────────────────────────────────────────────────────
+
+function ApprovalBanner({
+  onApprove,
+  onReject,
+  loading,
+}: {
+  onApprove: () => void;
+  onReject: () => void;
+  loading: boolean;
+}) {
+  return (
+    <div className="shrink-0 bg-amber-50 border-t-2 border-amber-300 px-6 py-4 flex items-center justify-between gap-4 shadow-xl">
+      <div className="flex items-center gap-3 min-w-0">
+        <span className="text-2xl shrink-0">⏸</span>
+        <div className="min-w-0">
+          <p className="font-bold text-amber-900 text-sm">Spec ready — your approval needed</p>
+          <p className="text-xs text-amber-700 mt-0.5">
+            Review the spec above. Approve to start Engineering, or Reject to cancel.
+          </p>
+        </div>
+      </div>
+      <div className="flex gap-3 shrink-0">
+        <button
+          onClick={onReject}
+          disabled={loading}
+          className="px-4 py-2 rounded-lg border-2 border-red-300 text-red-700 text-sm font-semibold hover:bg-red-50 transition-colors disabled:opacity-40"
+        >
+          ✗ Reject
+        </button>
+        <button
+          onClick={onApprove}
+          disabled={loading}
+          className="px-5 py-2 rounded-lg bg-green-600 text-white text-sm font-bold hover:bg-green-700 transition-colors shadow disabled:opacity-60 flex items-center gap-2"
+        >
+          {loading
+            ? <><span className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" /> Approving…</>
+            : "✓ Approve — Start Engineering"}
+        </button>
       </div>
     </div>
   );
 }
 
-// Map LangGraph node names → step keys
-const NODE_TO_STEP: Record<string, string> = {
-  pm:         "pm",
-  analyser:   "analyser",
-  human_gate: "gate",
-  engineer:   "engineer",
-  qa:         "qa",
+// ── Task board ────────────────────────────────────────────────────────────────
+
+const STATUS_DOT: Record<string, string> = {
+  done:        "bg-green-500",
+  in_progress: "bg-blue-500",
+  pending:     "bg-gray-300",
 };
 
-// A step is "done" once the pipeline has moved past it
-const STEP_ORDER = ["pm", "analyser", "gate", "engineer", "qa"];
+const PRIORITY_LABEL: Record<number, { label: string; cls: string }> = {
+  1: { label: "P1", cls: "text-red-600 bg-red-50" },
+  2: { label: "P2", cls: "text-amber-600 bg-amber-50" },
+  3: { label: "P3", cls: "text-gray-500 bg-gray-100" },
+};
 
-function StepIndicator({
-  status,
-  currentNode,
+function TaskBoard({ tasks }: { tasks: Task[] }) {
+  if (!tasks.length) return null;
+  return (
+    <div>
+      <p className="text-xs font-semibold uppercase tracking-wider text-gray-400 mb-2">
+        PM Tasks ({tasks.length})
+      </p>
+      <div className="space-y-1.5">
+        {tasks.map((t) => {
+          const pCfg = PRIORITY_LABEL[t.priority] ?? PRIORITY_LABEL[3];
+          return (
+            <div key={t.id} className="rounded-lg bg-purple-50 border border-purple-100 px-3 py-2">
+              <div className="flex items-start gap-2">
+                <span className={`w-2 h-2 rounded-full mt-1.5 shrink-0 ${STATUS_DOT[t.status] ?? "bg-gray-300"}`} />
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-1.5 flex-wrap">
+                    <span className={`text-[10px] px-1 rounded font-bold ${pCfg.cls}`}>{pCfg.label}</span>
+                    <span className="text-xs font-semibold text-purple-800 leading-tight">{t.title}</span>
+                  </div>
+                  {t.description && (
+                    <p className="text-[11px] text-purple-600 mt-0.5 leading-snug opacity-80 truncate" title={t.description}>
+                      {t.description}
+                    </p>
+                  )}
+                </div>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+// ── Right panel ───────────────────────────────────────────────────────────────
+
+type RightTab = "spec" | "qa" | "artifacts";
+
+function RightPanel({
+  pipeline,
+  activeTab,
+  setActiveTab,
+  approveLoading,
 }: {
-  status: string;
-  currentNode: string | null;
+  pipeline: ReturnType<typeof usePipeline>;
+  activeTab: RightTab;
+  setActiveTab: (t: RightTab) => void;
+  approveLoading: boolean;
 }) {
-  const steps = [
-    { key: "pm",       label: "PM" },
-    { key: "analyser", label: "Analyser" },
-    { key: "gate",     label: "Review" },
-    { key: "engineer", label: "Engineer" },
-    { key: "qa",       label: "QA" },
+  const { status, jobData, approve, reject } = pipeline;
+  const hasSpec      = !!jobData?.spec;
+  const hasQA        = !!jobData?.test_report;
+  const hasArtifacts = Object.keys(jobData?.artifact_paths ?? {}).length > 0;
+  const hasSpecDir   = !!jobData?.spec_dir;
+
+  const tabs: { key: RightTab; label: string; badge?: string; enabled: boolean }[] = [
+    { key: "spec",      label: "Spec Review",  badge: status === "waiting_approval" ? "!" : undefined, enabled: true },
+    { key: "qa",        label: "QA Report",    enabled: hasQA },
+    { key: "artifacts", label: "Artifacts",
+      badge: hasArtifacts ? String(Object.keys(jobData?.artifact_paths ?? {}).length) : undefined,
+      enabled: hasArtifacts || hasSpecDir },
   ];
 
-  // Determine the active step from the real LangGraph node name
-  const activeStep = (status === "starting")
-    ? "pm"
-    : (status === "waiting_approval")
-      ? "gate"
-      : (currentNode ? NODE_TO_STEP[currentNode] ?? null : null);
+  return (
+    <div className="flex flex-col h-full">
+      {/* Tab bar */}
+      <div className="flex gap-0.5 px-3 pt-2 shrink-0 border-b border-gray-100 bg-white">
+        {tabs.map(({ key, label, badge, enabled }) => (
+          <button
+            key={key}
+            disabled={!enabled}
+            onClick={() => setActiveTab(key)}
+            className={`relative px-3 py-2 text-xs font-semibold rounded-t transition-colors border-b-2
+              ${activeTab === key
+                ? "border-blue-500 text-blue-700 bg-blue-50/50"
+                : enabled
+                ? "border-transparent text-gray-500 hover:text-gray-700 hover:bg-gray-50"
+                : "border-transparent text-gray-300 cursor-not-allowed"}`}
+          >
+            {label}
+            {badge && (
+              <span className={`absolute -top-1 -right-1 min-w-[1rem] h-4 px-0.5 rounded-full text-[9px] flex items-center justify-center font-bold
+                ${badge === "!" ? "bg-amber-400 text-amber-900" : "bg-blue-500 text-white"}`}>
+                {badge}
+              </span>
+            )}
+          </button>
+        ))}
+      </div>
 
-  const activeIdx = activeStep ? STEP_ORDER.indexOf(activeStep) : -1;
-  const isTerminal = status === "done" || status === "failed";
+      {/* Tab content */}
+      <div className="flex-1 overflow-y-auto p-4 min-h-0">
+        {activeTab === "spec" && (
+          hasSpec
+            ? <SpecReview spec={jobData!.spec!} onApprove={approve} onReject={reject} showButtons={false} />
+            : (
+              <div className="flex flex-col items-center justify-center h-full gap-3 text-gray-400">
+                {status === "idle"
+                  ? <p className="text-sm">Start a pipeline to see the technical spec here.</p>
+                  : <><div className="w-8 h-8 border-2 border-gray-200 border-t-blue-400 rounded-full animate-spin" />
+                     <p className="text-sm">Analyser is writing the spec…</p></>
+                }
+              </div>
+            )
+        )}
+
+        {activeTab === "qa" && (
+          hasQA
+            ? <TestReport report={jobData!.test_report!} />
+            : <div className="text-sm text-gray-400 text-center pt-12">QA report not yet available.</div>
+        )}
+
+        {activeTab === "artifacts" && (
+          <ArtifactList
+            artifactPaths={jobData?.artifact_paths ?? {}}
+            specDir={jobData?.spec_dir}
+          />
+        )}
+      </div>
+
+      {/* Sticky approval banner */}
+      {status === "waiting_approval" && (
+        <ApprovalBanner onApprove={approve} onReject={reject} loading={approveLoading} />
+      )}
+    </div>
+  );
+}
+
+// ── Stat tile ─────────────────────────────────────────────────────────────────
+
+function StatTile({ label, value, color = "text-gray-700" }: { label: string; value: string | number; color?: string }) {
+  return (
+    <div className="rounded-lg bg-gray-50 border border-gray-100 px-3 py-2 text-center">
+      <p className="text-[10px] text-gray-400 uppercase tracking-wide">{label}</p>
+      <p className={`text-lg font-bold ${color}`}>{value}</p>
+    </div>
+  );
+}
+
+// ── Root app ──────────────────────────────────────────────────────────────────
+
+export default function App() {
+  const pipeline = usePipeline();
+  const { status, jobId, jobData, sseEvents, error, approve, reject } = pipeline;
+
+  const [rightTab, setRightTab] = useState<RightTab>("spec");
+  const [approveLoading, setApproveLoading] = useState(false);
+  const [cancelPending, setCancelPending] = useState(false);
+
+  // Switch tabs in effect (never during render)
+  useEffect(() => {
+    if (status === "waiting_approval") setRightTab("spec");
+  }, [status]);
+
+  useEffect(() => {
+    if (status === "done" && jobData?.test_report) setRightTab("qa");
+  }, [status, jobData?.test_report]);
+
+  const handleApprove = useCallback(async () => {
+    setApproveLoading(true);
+    try { await approve(); } finally { setApproveLoading(false); }
+  }, [approve]);
+
+  const handleCancel = useCallback(async () => {
+    if (!window.confirm("Cancel this pipeline run? The in-flight agent subprocess may still complete.")) return;
+    setCancelPending(true);
+    try { await pipeline.cancel(); } finally { setCancelPending(false); }
+  }, [pipeline]);
+
+  const isActive = status !== "idle";
 
   return (
-    <ol className="space-y-1">
-      {steps.map(({ key, label }, idx) => {
-        const isDone = isTerminal
-          ? status === "done"                   // all green on done, none on failed
-          : activeIdx > idx;                    // steps before current are done
-        const isCurrent = !isTerminal && activeStep === key;
+    <div className="flex flex-col h-screen bg-gray-50 overflow-hidden">
 
-        return (
-          <li key={key} className="flex items-center gap-2 text-xs">
-            <span className={`w-4 h-4 rounded-full flex items-center justify-center text-xs shrink-0
-              ${isDone     ? "bg-green-500 text-white" :
-                isCurrent  ? "bg-blue-500 text-white animate-pulse" :
-                             "bg-gray-200 text-gray-400"}`}>
-              {isDone ? "✓" : "·"}
-            </span>
-            <span className={
-              isDone    ? "text-gray-700" :
-              isCurrent ? "text-blue-700 font-medium" :
-                          "text-gray-400"
-            }>
-              {label}
-            </span>
-          </li>
-        );
-      })}
-    </ol>
+      {/* ── Header ── */}
+      <header className="shrink-0 bg-gray-900 text-white px-4 py-2.5 flex items-center gap-4 border-b border-gray-800">
+        <div className="flex items-center gap-2 shrink-0">
+          <span className="text-lg">🤖</span>
+          <span className="font-bold text-sm tracking-tight">AI Orchestrator</span>
+        </div>
+
+        {jobId && <CopyButton text={jobId} />}
+
+        {/* Flow bar */}
+        <div className="flex-1 max-w-md mx-auto hidden sm:block">
+          {isActive
+            ? <PipelineFlowBar status={status} currentNode={jobData?.current_node ?? null} />
+            : <p className="text-xs text-gray-600 text-center">Start a pipeline to see progress</p>
+          }
+        </div>
+
+        <StatusPill status={status} />
+      </header>
+
+      {/* ── Body ── */}
+      <div className="flex flex-1 min-h-0">
+
+        {/* Sidebar */}
+        <aside className="w-60 shrink-0 bg-white border-r border-gray-100 flex flex-col min-h-0">
+          <div className="flex-1 overflow-y-auto p-3 space-y-4">
+
+            <div>
+              <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400 mb-2">
+                {isActive ? "Pipeline Control" : "New Pipeline"}
+              </p>
+              <PipelineForm
+                status={status}
+                onStart={pipeline.start}
+                onCancel={handleCancel}
+                onReset={pipeline.reset}
+                cancelPending={cancelPending}
+              />
+            </div>
+
+            {/* Project folder path */}
+            {jobData?.project_dir && (
+              <div className="rounded-lg bg-gray-50 border border-gray-200 px-3 py-2">
+                <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400 mb-1">Project Folder</p>
+                <p className="text-xs font-mono text-blue-700 break-all">{jobData.project_dir}</p>
+                {jobData.spec_dir && (
+                  <p className="text-[10px] font-mono text-gray-400 mt-0.5">└─ spec/</p>
+                )}
+              </div>
+            )}
+
+            {/* Stats */}
+            {jobData && (
+              <div className="grid grid-cols-2 gap-2">
+                <StatTile label="Eng retry"  value={jobData.iteration} color={jobData.iteration > 0 ? "text-amber-600" : "text-gray-700"} />
+                <StatTile label="Spec retry" value={jobData.qa_analyser_iteration} color={jobData.qa_analyser_iteration > 0 ? "text-amber-600" : "text-gray-700"} />
+                {jobData.history.length > 0 && (
+                  <StatTile label="Agents run" value={jobData.history.length} />
+                )}
+                {jobData.cost_estimate_usd !== null && (
+                  <StatTile label="Cost" value={jobData.cost_estimate_usd === 0 ? "$0" : `$${jobData.cost_estimate_usd?.toFixed(4)}`} />
+                )}
+              </div>
+            )}
+
+            {/* PM tasks */}
+            {(jobData?.tasks?.length ?? 0) > 0 && (
+              <TaskBoard tasks={jobData!.tasks} />
+            )}
+          </div>
+
+          {error && (
+            <div className="shrink-0 p-2 bg-red-50 border-t border-red-100">
+              <p className="text-[10px] text-red-700 font-mono break-all">{error}</p>
+            </div>
+          )}
+        </aside>
+
+        {/* Main: timeline + right panel */}
+        <div className="flex flex-1 min-w-0 min-h-0">
+
+          {/* Left: Agent timeline */}
+          <div className="w-72 shrink-0 border-r border-gray-100 bg-white flex flex-col min-h-0">
+            <div className="shrink-0 px-3 py-2 border-b border-gray-100 flex items-center justify-between">
+              <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400">Agent Timeline</p>
+              {jobData && (
+                <span className="text-[10px] text-gray-400">
+                  {jobData.history.length} event{jobData.history.length !== 1 ? "s" : ""}
+                </span>
+              )}
+            </div>
+            <div className="flex-1 overflow-y-auto p-2.5">
+              {status === "idle"
+                ? <p className="text-xs text-gray-300 text-center pt-12">No pipeline running.</p>
+                : <AgentTimeline
+                    history={jobData?.history ?? []}
+                    sseEvents={sseEvents}
+                    iteration={jobData?.iteration ?? 0}
+                    qaAnalyserIteration={jobData?.qa_analyser_iteration ?? 0}
+                  />
+              }
+            </div>
+          </div>
+
+          {/* Right: Spec / QA / Artifacts */}
+          <div className="flex-1 min-w-0 flex flex-col min-h-0">
+            {/* Terminal banners */}
+            {status === "done" && (
+              <div className="shrink-0 mx-4 mt-3 rounded-xl bg-green-50 border border-green-200 px-4 py-2.5 flex items-center gap-3">
+                <span className="text-xl">✅</span>
+                <p className="text-sm font-semibold text-green-800">
+                  Pipeline complete
+                  {jobData?.cost_estimate_usd === 0 ? " — Mode B ($0 API cost)" : ""}
+                </p>
+              </div>
+            )}
+            {status === "failed" && (
+              <div className="shrink-0 mx-4 mt-3 rounded-xl bg-red-50 border border-red-200 px-4 py-2.5 flex items-center gap-3">
+                <span className="text-xl">❌</span>
+                <div>
+                  <p className="text-sm font-semibold text-red-800">Pipeline failed</p>
+                  {error && <p className="text-[11px] text-red-600 font-mono mt-0.5 break-all">{error}</p>}
+                </div>
+              </div>
+            )}
+
+            <div className="flex-1 min-h-0">
+              <RightPanel
+                pipeline={{ ...pipeline, approve: handleApprove, reject }}
+                activeTab={rightTab}
+                setActiveTab={setRightTab}
+                approveLoading={approveLoading}
+              />
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
   );
 }

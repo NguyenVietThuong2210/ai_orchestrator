@@ -29,6 +29,12 @@ def _get_artifact_dir() -> str:
     return os.getenv("ARTIFACT_DIR", "./artifacts")
 
 
+def _claude_cmd() -> str:
+    """Return 'claude.cmd' on Windows (asyncio.create_subprocess_exec can't resolve .cmd
+    via PATHEXT), plain 'claude' elsewhere."""
+    return "claude.cmd" if os.name == "nt" else "claude"
+
+
 def _get_model(agent_name: str) -> str:
     """Lazy model lookup — reads ENV at call time, after load_dotenv()."""
     defaults = {
@@ -136,15 +142,19 @@ class ClaudeCodeBackend(BaseBackend):
         start = datetime.now(timezone.utc)
 
         cmd = [
-            "claude",
+            _claude_cmd(),
             "--model", model,
             "-p", prompt,
             "--output-format", "json",
         ]
 
+        # Unset CLAUDECODE so the subprocess isn't blocked by the nested-session guard
+        env = {k: v for k, v in os.environ.items() if k != "CLAUDECODE"}
+
         proc = await asyncio.create_subprocess_exec(
             *cmd,
             cwd=cwd,
+            env=env,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )

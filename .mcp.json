@@ -1,0 +1,10 @@
+{
+  "mcpServers": {
+    "ai-orchestrator": {
+      "type": "stdio",
+      "command": "python",
+      "args": ["mcp_server/server.py"],
+      "cwd": "d:\\New-jouney\\ai_orchestrator"
+    }
+  }
+}

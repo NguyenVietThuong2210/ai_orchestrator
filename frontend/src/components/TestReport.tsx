@@ -33,13 +33,13 @@ export function TestReport({ report }: Props) {
       </div>
 
       {/* Passed */}
-      {report.passed.length > 0 && (
+      {(report.passed ?? []).length > 0 && (
         <div>
           <h3 className="text-xs font-semibold uppercase tracking-wider text-gray-500 mb-1.5">
-            Passed ({report.passed.length})
+            Passed ({(report.passed ?? []).length})
           </h3>
           <ul className="space-y-0.5">
-            {report.passed.map((t, i) => (
+            {(report.passed ?? []).map((t, i) => (
               <li key={i} className="flex items-center gap-2 text-sm font-mono text-green-700">
                 <span>✓</span> {t}
               </li>
@@ -49,13 +49,13 @@ export function TestReport({ report }: Props) {
       )}
 
       {/* Failed */}
-      {report.failed.length > 0 && (
+      {(report.failed ?? []).length > 0 && (
         <div>
           <h3 className="text-xs font-semibold uppercase tracking-wider text-gray-500 mb-1.5">
-            Failed ({report.failed.length})
+            Failed ({(report.failed ?? []).length})
           </h3>
           <ul className="space-y-0.5">
-            {report.failed.map((t, i) => (
+            {(report.failed ?? []).map((t, i) => (
               <li key={i} className="flex items-center gap-2 text-sm font-mono text-red-700">
                 <span>✗</span> {t}
               </li>
@@ -65,13 +65,13 @@ export function TestReport({ report }: Props) {
       )}
 
       {/* Defects */}
-      {report.defects.length > 0 && (
+      {(report.defects ?? []).length > 0 && (
         <div>
           <h3 className="text-xs font-semibold uppercase tracking-wider text-gray-500 mb-2">
-            Defects ({report.defects.length})
+            Defects ({(report.defects ?? []).length})
           </h3>
           <div className="space-y-2">
-            {report.defects.map((d) => (
+            {(report.defects ?? []).map((d) => (
               <div key={d.id} className="rounded-lg border border-gray-200 bg-white p-3 text-sm">
                 <div className="flex items-center gap-2 mb-1">
                   <span className={`text-xs px-1.5 py-0.5 rounded font-mono ${SEVERITY_CLASSES[d.severity] ?? "bg-gray-100 text-gray-700"}`}>

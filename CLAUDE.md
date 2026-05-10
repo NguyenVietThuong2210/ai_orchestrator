@@ -212,10 +212,9 @@ ai_orchestrator/
 │   │   │   ├── useSSE.ts      # EventSource hook with auto-close
 │   │   │   └── usePipeline.ts # pipeline state machine + polling
 │   │   └── components/
-│   │       ├── StatusBadge.tsx
-│   │       ├── PipelineForm.tsx   # requirement textarea + Run/Cancel button
-│   │       ├── AgentTimeline.tsx  # real-time agent event log (SSE + history)
-│   │       ├── SpecReview.tsx     # spec viewer + Approve / Reject buttons
+│   │       ├── PipelineForm.tsx   # requirement textarea + Run/Cancel (cancelPending prop)
+│   │       ├── AgentTimeline.tsx  # flat space-y-2 list; parent handles scroll
+│   │       ├── SpecReview.tsx     # spec sections; showButtons=false hides inline btns
 │   │       ├── ArtifactList.tsx   # engineer output file list
 │   │       └── TestReport.tsx     # QA pass/fail/defect report
 │   ├── package.json
@@ -307,6 +306,67 @@ response = client.messages.create(
     max_tokens=8096,
 )
 ```
+
+## Frontend — UI Architecture (Project Owner Dashboard)
+
+The React SPA (`frontend/src/`) is a **project-owner dashboard**, not a chat UI. Layout:
+
+```
+┌─ Header ─────────────────────────────────────────────────────────────────┐
+│  🤖 AI Orchestrator  [job-id copy btn]  [PM→Analyser→Review→Eng→QA bar]  [Status pill] │
+├─ Sidebar (w-60) ──┬─ Agent Timeline (w-72) ─┬─ Right Panel (flex-1) ────┤
+│  PipelineForm     │  Real-time event log     │  Tabs: Spec / QA / Files  │
+│  Stat tiles       │  (history + SSE)         │                           │
+│  PM Task board    │                          │  [Sticky Approve banner]  │
+└───────────────────┴──────────────────────────┴───────────────────────────┘
+```
+
+### Key FE rules
+- **Never call `setState` during render** — tab auto-switching uses `useEffect`, not inline conditionals.
+- **Approve button** has a loading state (`approveLoading`) and is disabled while the request is in-flight.
+- **Cancel** shows a `window.confirm` dialog before calling the API — prevents accidental clicks.
+- **CopyButton** copies job ID to clipboard; displays truncated form in header.
+- **TaskBoard** renders PM tasks with priority badge (P1/P2/P3), status dot, and description.
+- **`SpecReview`** accepts `showButtons={false}` — approve/reject are in the sticky `ApprovalBanner`, not duplicated inline.
+- **`AgentTimeline`** is a flat `<div className="space-y-2">` — the parent column handles overflow-y scroll.
+
+### State machine (`usePipeline.ts`)
+```
+idle → starting → running ⇄ waiting_approval → running → done
+                                                        → failed
+```
+- Polling (`setInterval 2500ms`) starts on `running`, stops at terminal states (`done | failed | waiting_approval`).
+- After `approve()`, polling is manually restarted.
+- SSE stream (`useSSE`) is active only when `status === "running"`.
+
+## Known Issues & Constraints
+
+### BE: `_jobs` registry is in-memory
+`_jobs: dict[str, dict]` in `routes.py` is process-local. On server restart, all job IDs are lost → `/status` returns 404. **Production fix**: recover `_jobs` from SQLite checkpoint on startup, or persist to DB.
+
+### BE: `SqliteSaver` — use `sqlite3.connect` directly (LangGraph 1.x)
+`SqliteSaver.from_conn_string()` returns a **context-manager iterator**, NOT a `SqliteSaver`. Always construct via:
+```python
+import sqlite3
+from langgraph.checkpoint.sqlite import SqliteSaver
+conn = sqlite3.connect(CHECKPOINT_DB, check_same_thread=False)
+checkpointer = SqliteSaver(conn)
+```
+Never call `SqliteSaver.from_conn_string(path)` without `with` — it silently produces a generator.
+
+### BE: Mode B (ClaudeCodeBackend) — nested session guard
+`claude -p` subprocesses fail with "Cannot be launched inside another Claude Code session" when the `CLAUDECODE` env var is set. Fix: strip `CLAUDECODE` from subprocess env:
+```python
+env = {k: v for k, v in os.environ.items() if k != "CLAUDECODE"}
+proc = await asyncio.create_subprocess_exec(*cmd, env=env, ...)
+```
+This is already applied in `orchestrator/backends/claude_code_backend.py`.
+
+### BE: `current_node` semantics
+`snapshot.next` contains the **next** node to execute, not the currently running one. When no next node exists (`next == ()`), the route handler sets `current_node = "end"`. The frontend `NODE_TO_STEP` map ignores "end"; `getStepState` falls back gracefully.
+
+### FE: `JobStatusResponse.tasks` must be included
+`tasks` (PM output) must be in the API response for `TaskBoard` to render. It is declared in `schemas.py → JobStatusResponse` and populated in `routes.py → get_status` via `state.get("tasks", [])`.
 
 ## Enterprise Checklist
 

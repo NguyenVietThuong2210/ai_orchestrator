@@ -65,7 +65,7 @@ function SSERow({ e }: { e: SSEEvent }) {
   );
 }
 
-export function AgentTimeline({ history, sseEvents, iteration, qaAnalyserIteration }: Props) {
+export function AgentTimeline({ history, sseEvents }: Props) {
   const bottomRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -73,37 +73,27 @@ export function AgentTimeline({ history, sseEvents, iteration, qaAnalyserIterati
   }, [history.length, sseEvents.length]);
 
   return (
-    <div className="h-full flex flex-col">
-      <div className="flex items-center justify-between mb-3">
-        <h2 className="text-sm font-semibold text-gray-700">Agent Timeline</h2>
-        <div className="flex gap-3 text-xs text-gray-500">
-          <span>Engineer retry: <strong>{iteration}</strong></span>
-          <span>Spec retry: <strong>{qaAnalyserIteration}</strong></span>
+    <div className="space-y-2">
+      {history.length === 0 && sseEvents.length === 0 && (
+        <div className="text-sm text-gray-400 text-center py-12">
+          Waiting for first agent to start…
         </div>
-      </div>
+      )}
 
-      <div className="flex-1 overflow-y-auto space-y-2 scrollbar-thin pr-1">
-        {history.length === 0 && sseEvents.length === 0 && (
-          <div className="text-sm text-gray-400 text-center py-12">
-            Waiting for first agent to start…
-          </div>
-        )}
+      {history.map((event, i) => (
+        <AgentCard key={i} event={event} />
+      ))}
 
-        {history.map((event, i) => (
-          <AgentCard key={i} event={event} />
-        ))}
+      {/* Live SSE events */}
+      {sseEvents.length > 0 && (
+        <div className="rounded-lg border border-dashed border-gray-200 bg-gray-50 px-2 py-1 space-y-0.5">
+          {sseEvents.slice(-20).map((e, i) => (
+            <SSERow key={i} e={e} />
+          ))}
+        </div>
+      )}
 
-        {/* Live SSE events (shown between polling updates) */}
-        {sseEvents.length > 0 && (
-          <div className="rounded-lg border border-dashed border-gray-200 bg-gray-50 px-2 py-1 space-y-0.5">
-            {sseEvents.slice(-20).map((e, i) => (
-              <SSERow key={i} e={e} />
-            ))}
-          </div>
-        )}
-
-        <div ref={bottomRef} />
-      </div>
+      <div ref={bottomRef} />
     </div>
   );
 }

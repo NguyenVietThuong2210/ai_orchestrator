@@ -34,10 +34,13 @@ class JobStatusResponse(BaseModel):
     iteration: int
     qa_analyser_iteration: int
     artifact_paths: dict[str, str]
+    tasks: list[dict]                  # PM output — Task list
     spec: Optional[dict]               # TechnicalSpec — needed by MCP project_spec resource
     test_report: Optional[dict]
     history: list[dict]                # AgentEvent list — needed by MCP agent_logs resource
     cost_estimate_usd: Optional[float]
+    project_dir: Optional[str]         # e.g. "projects/hello_django"
+    spec_dir: Optional[str]            # e.g. "projects/hello_django/spec"
 
 
 class CancelJobResponse(BaseModel):

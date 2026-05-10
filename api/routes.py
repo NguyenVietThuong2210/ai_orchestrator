@@ -98,25 +98,39 @@ async def get_status(job_id: str):
     next_nodes   = snapshot.next or ()
     current_node = next_nodes[0] if next_nodes else "end"
 
-    # Derive human-readable status
+    # Derive human-readable status — also check _jobs for explicit failure/cancel
+    job_meta = _jobs.get(job_id, {})
     if state.get("status") in ("done", "failed"):
         derived_status = state["status"]
+    elif job_meta.get("status") == "failed":
+        derived_status = "failed"
     elif current_node == "human_gate":
         derived_status = "waiting_approval"
+    elif current_node == "end" and not state:
+        # No checkpoint yet — pipeline is still starting
+        derived_status = "running"
     else:
         derived_status = "running"
+
+    # current_node "end" means nothing is next — map to readable value
+    readable_node = current_node if current_node != "end" else (
+        state.get("status", "running")  # "done", "failed", or "running"
+    )
 
     return JobStatusResponse(
         job_id=job_id,
         status=derived_status,
-        current_node=current_node,
+        current_node=readable_node,
         iteration=state.get("iteration", 0),
         qa_analyser_iteration=state.get("qa_analyser_iteration", 0),
         artifact_paths=state.get("artifact_paths", {}),
+        tasks=state.get("tasks", []),
         spec=state.get("spec"),
         test_report=state.get("test_report"),
         history=state.get("history", []),
         cost_estimate_usd=_sum_cost(state.get("history", [])),
+        project_dir=state.get("project_dir"),
+        spec_dir=state.get("spec_dir"),
     )
 
 
