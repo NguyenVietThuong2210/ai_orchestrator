@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "WebSearch",
+      "Bash(del \"d:\\\\New-jouney\\\\ai_orchestrator\\\\RESEARCH.md\")"
+    ]
+  }
+}
