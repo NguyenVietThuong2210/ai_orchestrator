@@ -21,7 +21,7 @@ from uuid import uuid4
 from langgraph.types import Command
 
 from orchestrator.context import ProjectContext
-from orchestrator.graph import compile_app
+from orchestrator.graph import get_app
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
 logger = logging.getLogger(__name__)
 
@@ -68,15 +68,19 @@ async def run_pipeline(requirement: str, job_id: str | None = None) -> ProjectCo
     """
     job_id  = job_id or str(uuid4())
     config  = {"configurable": {"thread_id": job_id}}
-    app     = compile_app()
+    app     = await get_app()
     state   = _initial_state(requirement, job_id)
 
     logger.info("▶ Pipeline started — job_id=%s", job_id)
 
-    async for event in app.astream(state, config, stream_mode="values"):
-        _log_event(event)
+    try:
+        async for event in app.astream(state, config, stream_mode="values"):
+            _log_event(event)
+    except Exception as exc:
+        logger.error("▶ astream raised: %s: %s", type(exc).__name__, exc, exc_info=True)
+        raise
 
-    snapshot = app.get_state(config)
+    snapshot = await app.aget_state(config)
     final    = snapshot.values
 
     if snapshot.next == ("human_gate",):
@@ -95,14 +99,18 @@ async def resume_pipeline(job_id: str, decision: str = "approve") -> ProjectCont
               anything else → spec rejected, pipeline raises ValueError
     """
     config = {"configurable": {"thread_id": job_id}}
-    app    = compile_app()
+    app    = await get_app()
 
     logger.info("▶ Resuming pipeline — job_id=%s decision=%s", job_id, decision)
 
-    async for event in app.astream(Command(resume=decision), config, stream_mode="values"):
-        _log_event(event)
+    try:
+        async for event in app.astream(Command(resume=decision), config, stream_mode="values"):
+            _log_event(event)
+    except Exception as exc:
+        logger.error("▶ resume astream raised: %s: %s", type(exc).__name__, exc, exc_info=True)
+        raise
 
-    return app.get_state(config).values
+    return (await app.aget_state(config)).values
 
 
 def _log_event(event: dict) -> None:

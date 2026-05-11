@@ -6,7 +6,7 @@ from pydantic import BaseModel, Field
 
 
 class RunPipelineRequest(BaseModel):
-    requirement: str = Field(..., min_length=10, description="User requirement text")
+    requirement: str = Field(..., min_length=10, max_length=8000, description="User requirement text")
     job_id: Optional[str] = Field(None, description="Optional — provide to resume a previous job")
 
 
@@ -41,8 +41,18 @@ class JobStatusResponse(BaseModel):
     cost_estimate_usd: Optional[float]
     project_dir: Optional[str]         # e.g. "projects/hello_django"
     spec_dir: Optional[str]            # e.g. "projects/hello_django/spec"
+    error: Optional[str] = None        # error message when status="failed"
 
 
 class CancelJobResponse(BaseModel):
     job_id: str
     message: str
+
+
+class JobSummary(BaseModel):
+    job_id: str
+    status: str   # last known status from _jobs registry
+
+
+class JobListResponse(BaseModel):
+    jobs: list[JobSummary]

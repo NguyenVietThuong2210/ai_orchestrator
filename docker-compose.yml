@@ -1,0 +1,77 @@
+services:
+
+  # ── PostgreSQL ──────────────────────────────────────────────────────────────
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB:       ${POSTGRES_DB:-orchestrator}
+      POSTGRES_USER:     ${POSTGRES_USER:-orchestrator}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-orchestrator}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"         # expose for local tooling (pgAdmin, psql)
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-orchestrator} -d ${POSTGRES_DB:-orchestrator}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  # ── AI Orchestrator backend + frontend ─────────────────────────────────────
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      # Postgres checkpoint (replaces SQLite in production)
+      DATABASE_URL: postgresql://${POSTGRES_USER:-orchestrator}:${POSTGRES_PASSWORD:-orchestrator}@postgres:5432/${POSTGRES_DB:-orchestrator}
+
+      # Agent backend: claude_code (Mode B, Pro subscription) or api (Mode A, API key)
+      AI_BACKEND:    ${AI_BACKEND:-claude_code}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+
+      # Models (Mode A)
+      PM_MODEL:       ${PM_MODEL:-claude-haiku-4-5-20251001}
+      ANALYSER_MODEL: ${ANALYSER_MODEL:-claude-sonnet-4-6}
+      ENGINEER_MODEL: ${ENGINEER_MODEL:-claude-sonnet-4-6}
+      QA_MODEL:       ${QA_MODEL:-claude-sonnet-4-6}
+
+      # Models (Mode B)
+      PM_MODEL_B:       ${PM_MODEL_B:-claude-haiku-4-5-20251001}
+      ANALYSER_MODEL_B: ${ANALYSER_MODEL_B:-claude-sonnet-4-6}
+      ENGINEER_MODEL_B: ${ENGINEER_MODEL_B:-claude-sonnet-4-6}
+      QA_MODEL_B:       ${QA_MODEL_B:-claude-sonnet-4-6}
+
+      # Pipeline limits
+      MAX_QA_ITERATIONS:          ${MAX_QA_ITERATIONS:-3}
+      MAX_QA_ANALYSER_ITERATIONS: ${MAX_QA_ANALYSER_ITERATIONS:-2}
+
+      # Paths (inside container)
+      ARTIFACT_DIR:  /app/artifacts
+      PROJECTS_ROOT: /app/projects
+
+      LOG_LEVEL:    ${LOG_LEVEL:-INFO}
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:8000}
+
+    volumes:
+      - ./artifacts:/app/artifacts   # persist generated code
+      - ./projects:/app/projects     # persist spec folders
+
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8000/ || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+
+volumes:
+  postgres_data:

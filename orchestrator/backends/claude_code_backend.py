@@ -17,6 +17,7 @@ import json
 import logging
 import os
 import re
+import subprocess
 from datetime import datetime, timezone
 
 from orchestrator.backends.base import BaseBackend
@@ -46,11 +47,14 @@ def _get_model(agent_name: str) -> str:
     return os.getenv(f"{agent_name.upper()}_MODEL_B", defaults[agent_name])
 
 
-# Mode-B specific submit instructions appended after the agent's own prompt
+# Mode-B specific submit instructions appended after the agent's own prompt.
+# IMPORTANT: Do NOT use tool-calling language here — Mode B outputs XML, not tool calls.
 SUBMIT_INSTRUCTIONS: dict[str, str] = {
     "pm": """
 ---
-Output your result at the very end as valid JSON inside <submit> tags:
+IMPORTANT: Do NOT call any tools. Instead, output your final result as plain text ending with
+a <submit> block containing valid JSON:
+
 <submit>
 {
   "tasks": [
@@ -61,21 +65,24 @@ Output your result at the very end as valid JSON inside <submit> tags:
 
     "analyser": """
 ---
-Output your result at the very end as valid JSON inside <submit> tags:
+IMPORTANT: Do NOT call any tools. Instead, output your full technical spec as plain text
+ending with a <submit> block containing valid JSON. All arrays must be present (use [] if empty):
+
 <submit>
 {
   "overview": "...",
-  "components": [...],
-  "api_contracts": [...],
-  "data_models": [...],
-  "risks": [...],
-  "acceptance_criteria": ["Given X when Y then Z"]
+  "components": [{"name": "...", "responsibility": "...", "dependencies": []}],
+  "api_contracts": [{"method": "GET", "path": "/", "request_schema": {}, "response_schema": {}, "errors": []}],
+  "data_models": [],
+  "risks": [{"description": "...", "severity": "low", "mitigation": "..."}],
+  "acceptance_criteria": ["Given a GET request to /, when the server is running, then return 200 with 'Hello, World!'"]
 }
 </submit>""",
 
     "engineer": """
 ---
-After writing all files, output a <submit> block listing them:
+IMPORTANT: Write all required files using your file tools. Then output a <submit> block:
+
 <submit>
 {
   "artifact_paths": {"filename.py": "./artifacts/filename.py"},
@@ -85,7 +92,8 @@ After writing all files, output a <submit> block listing them:
 
     "qa": """
 ---
-Output your TestReport at the very end as valid JSON inside <submit> tags:
+IMPORTANT: Run tests using your tools. Then output your TestReport as a <submit> block:
+
 <submit>
 {
   "status": "pass",
@@ -111,6 +119,49 @@ def _extract_submit_data(agent_name: str, output: str) -> dict:
     return json.loads(match.group(1))
 
 
+async def _run_subprocess(
+    cmd: list[str],
+    env: dict[str, str],
+    cwd: str | None,
+    stdin_data: bytes | None = None,
+) -> tuple[bytes, bytes, int]:
+    """
+    Windows-safe subprocess runner.
+
+    Two Windows limitations addressed here:
+    1. asyncio.create_subprocess_exec requires ProactorEventLoop — use thread executor.
+    2. Windows cmd.exe command lines cannot contain literal newlines in arguments —
+       pass the prompt via stdin instead of as a positional argument.
+    """
+    loop = asyncio.get_event_loop()
+    _proc: list[subprocess.Popen | None] = [None]
+
+    def _blocking() -> tuple[bytes, bytes]:
+        p = subprocess.Popen(
+            cmd,
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            env=env,
+            cwd=cwd,
+        )
+        _proc[0] = p
+        return p.communicate(input=stdin_data)
+
+    fut: asyncio.Future = loop.run_in_executor(None, _blocking)
+    try:
+        stdout_bytes, stderr_bytes = await fut
+        proc = _proc[0]
+        return stdout_bytes, stderr_bytes, proc.returncode if proc else -1
+    except asyncio.CancelledError:
+        proc = _proc[0]
+        if proc:
+            proc.kill()
+            proc.wait()
+        fut.cancel()
+        raise
+
+
 class ClaudeCodeBackend(BaseBackend):
     """
     Spawns each agent as a `claude -p` subprocess.
@@ -129,7 +180,8 @@ class ClaudeCodeBackend(BaseBackend):
         agent = AGENTS[agent_name]
         model = _get_model(agent_name)
 
-        # Build prompt: agent context + mode-B submit instructions
+        # Build user-turn prompt: agent context + mode-B submit instructions.
+        # System prompt is passed via --system-prompt flag to override CLAUDE.md.
         prompt = agent.build_prompt(state) + SUBMIT_INSTRUCTIONS[agent_name]
 
         # Engineer and QA need filesystem access — run from ARTIFACT_DIR
@@ -141,30 +193,46 @@ class ClaudeCodeBackend(BaseBackend):
         logger.info("[%s] spawning claude subprocess (model=%s)", agent_name, model)
         start = datetime.now(timezone.utc)
 
+        # Windows cmd.exe cannot handle newlines in CLI arguments.
+        # Flatten the system prompt to a single line for --system-prompt flag.
+        # The full user prompt is piped via stdin to bypass the argument length limit.
+        system_prompt_oneline = " ".join(agent.system_prompt.split())
+
+        # PM and Analyser: disable all tools — they only need to output text.
+        # Engineer and QA: allow file system tools for reading/writing artifacts.
+        if agent_name in ("engineer", "qa"):
+            extra_flags = ["--dangerously-skip-permissions"]
+        else:
+            extra_flags = ["--tools", ""]   # disable all tools: text output only
+
         cmd = [
             _claude_cmd(),
             "--model", model,
-            "-p", prompt,
+            "--system-prompt", system_prompt_oneline,  # overrides project CLAUDE.md
+            *extra_flags,
             "--output-format", "json",
+            "-p",                                      # print mode; reads prompt from stdin
         ]
 
-        # Unset CLAUDECODE so the subprocess isn't blocked by the nested-session guard
-        env = {k: v for k, v in os.environ.items() if k != "CLAUDECODE"}
+        # Strip vars that must not leak to the claude subprocess:
+        # - CLAUDECODE: blocks nested sessions
+        # - Secrets: DATABASE_URL, API keys should never reach the CLI process
+        _STRIP = {"CLAUDECODE", "DATABASE_URL", "ANTHROPIC_API_KEY",
+                  "LANGFUSE_PUBLIC_KEY", "LANGFUSE_SECRET_KEY"}
+        env = {k: v for k, v in os.environ.items() if k not in _STRIP}
 
-        proc = await asyncio.create_subprocess_exec(
-            *cmd,
-            cwd=cwd,
-            env=env,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
+        stdin_data = prompt.encode("utf-8")
+        stdout_bytes, stderr_bytes, returncode = await _run_subprocess(
+            cmd, env=env, cwd=cwd, stdin_data=stdin_data
         )
-        stdout_bytes, stderr_bytes = await proc.communicate()
         duration = (datetime.now(timezone.utc) - start).total_seconds()
 
-        if proc.returncode != 0:
-            err = stderr_bytes.decode(errors="replace")
+        if returncode != 0:
+            err    = stderr_bytes.decode(errors="replace").strip()
+            out    = stdout_bytes.decode(errors="replace").strip()
+            detail = err or out or "(no output)"
             raise RuntimeError(
-                f"[{agent_name}] claude subprocess exited {proc.returncode}:\n{err}"
+                f"[{agent_name}] claude subprocess exited {returncode}:\n{detail}"
             )
 
         raw = stdout_bytes.decode(errors="replace")

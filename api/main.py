@@ -17,6 +17,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from api.routes import router
+from orchestrator.graph import get_app, close_app
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
 
 _FRONTEND_DIST = pathlib.Path(__file__).parent.parent / "frontend" / "dist"
@@ -25,8 +26,10 @@ _FRONTEND_DIST = pathlib.Path(__file__).parent.parent / "frontend" / "dist"
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     pathlib.Path(os.getenv("ARTIFACT_DIR", "./artifacts")).mkdir(parents=True, exist_ok=True)
-    pathlib.Path("./data").mkdir(parents=True, exist_ok=True)
+    pathlib.Path(os.getenv("PROJECTS_ROOT", "./projects")).mkdir(parents=True, exist_ok=True)
+    await get_app()   # connect to Postgres + compile graph at startup
     yield
+    await close_app()
 
 
 app = FastAPI(
@@ -36,11 +39,20 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+_CORS_ORIGINS = [
+    o.strip()
+    for o in os.getenv(
+        "CORS_ORIGINS",
+        "http://localhost:5173,http://localhost:8000",
+    ).split(",")
+    if o.strip()
+]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],   # tighten in production
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_origins=_CORS_ORIGINS,
+    allow_methods=["GET", "POST"],
+    allow_headers=["Content-Type"],
 )
 
 app.include_router(router)

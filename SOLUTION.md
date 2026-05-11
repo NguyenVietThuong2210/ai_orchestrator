@@ -2,7 +2,14 @@
 
 > Tài liệu này tổng hợp các quyết định kiến trúc đã được chốt cho hệ thống AI Orchestrator.
 > Mục đích: dùng để trình bày, onboard team, và làm reference khi implement.
-> Cập nhật: 2026-05-09 | Thêm: Sequence diagrams Mode A & B
+> Cập nhật: 2026-05-10 | Thêm: PostgreSQL-only, Docker, QA audit fixes
+
+## Changelog
+
+| Ngày | Thay đổi |
+|---|---|
+| 2026-05-10 | **SQLite bị xóa hoàn toàn** — chỉ dùng `AsyncPostgresSaver` (PostgreSQL). Docker Compose stack. QA audit fixes (CORS, idempotency, secret filtering, null guards, SSE filter). Windows `claude.cmd` fix. |
+| 2026-05-09 | Initial build — LangGraph + 4 agents + FastAPI + React + MCP Server |
 
 ---
 
@@ -22,7 +29,7 @@ graph TB
     end
 
     subgraph ENGINE["⚙️ Orchestration Engine"]
-        LG["LangGraph Graph<br/>Deterministic routing · NOT an LLM<br/>conditional_edges + interrupt + SqliteSaver"]
+        LG["LangGraph Graph<br/>Deterministic routing · NOT an LLM<br/>conditional_edges + interrupt + AsyncPostgresSaver"]
         CTX["ProjectContext (TypedDict)<br/>Checkpoint tự động sau mỗi node<br/>Resume on crash"]
         GATE["Human Gate<br/>interrupt_before=[human_gate]<br/>Timeout: 24h"]
     end
@@ -114,7 +121,7 @@ sequenceDiagram
     actor User
     participant API as FastAPI :8000
     participant LG as LangGraph
-    participant CP as SQLite Checkpoint
+    participant CP as Postgres Checkpoint
     participant PM as PM Agent
     participant AN as Analyser Agent
     participant HG as Human Gate
@@ -126,11 +133,11 @@ sequenceDiagram
 
     LG->>PM: run("pm", state)
     PM-->>LG: state + tasks[]
-    LG->>CP: checkpoint
+    LG->>CP: checkpoint (AsyncPostgresSaver)
 
     LG->>AN: run("analyser", state)
     AN-->>LG: state + spec (cached system prompt)
-    LG->>CP: checkpoint
+    LG->>CP: checkpoint (AsyncPostgresSaver)
 
     LG-->>API: interrupt — Human Gate
     API-->>User: SSE: "spec_ready" + spec JSON
@@ -140,7 +147,7 @@ sequenceDiagram
 
     LG->>EN: run("engineer", state)
     EN-->>LG: state + artifact_paths
-    LG->>CP: checkpoint
+    LG->>CP: checkpoint (AsyncPostgresSaver)
 
     LG->>QA: run("qa", state)
     QA-->>LG: state + test_report
@@ -166,13 +173,13 @@ sequenceDiagram
 | 1 | User | POST /run-pipeline | — | Requirement text | job_id |
 | 2 | FastAPI | invoke LangGraph | — | state{request, job_id} | stream |
 | 3 | PM Agent | API call | Haiku 4.5 | Requirement + submit instruction | tasks[] |
-| 4 | LangGraph | checkpoint | — | state + tasks | SQLite row |
+| 4 | LangGraph | checkpoint | — | state + tasks | Postgres row |
 | 5 | Analyser Agent | API call (cached) | Opus 4.7 | Tasks + submit instruction | TechnicalSpec |
 | 6 | LangGraph | checkpoint + interrupt | — | state + spec | pause at human_gate |
 | 7 | FastAPI | SSE notify | — | spec JSON | "spec_ready" event |
 | 8 | User | POST /approve_spec | — | job_id + "approve" | — |
 | 9 | Engineer Agent | API call | Sonnet 4.6 | Spec + tasks + submit instruction | artifact_paths + files on disk |
-| 10 | LangGraph | checkpoint | — | state + artifact_paths | SQLite row |
+| 10 | LangGraph | checkpoint | — | state + artifact_paths | Postgres row |
 | 11 | QA Agent | API call | Sonnet 4.6 | Spec + artifact_paths + submit instruction | TestReport |
 | 12 | route_qa | Python function | — | test_report.status | "done" / "engineer" / "analyser" / "failed" |
 | 13 | FastAPI | SSE notify | — | final status | "done" hoặc "failed" |
@@ -188,7 +195,7 @@ sequenceDiagram
     actor User
     participant CC as Claude Code Session
     participant LG as LangGraph
-    participant CP as SQLite Checkpoint
+    participant CP as Postgres Checkpoint
     participant PM as PM Agent
     participant AN as Analyser Agent
     participant HG as Human Gate
@@ -201,12 +208,12 @@ sequenceDiagram
     LG->>PM: asyncio subprocess
     Note over PM: claude --model haiku -p prompt<br/>--output-format json
     PM-->>LG: stdout → parse [submit] → tasks[]
-    LG->>CP: checkpoint
+    LG->>CP: checkpoint (AsyncPostgresSaver)
 
     LG->>AN: asyncio subprocess
     Note over AN: claude --model sonnet -p prompt<br/>--output-format json
     AN-->>LG: stdout → parse [submit] → TechnicalSpec
-    LG->>CP: checkpoint
+    LG->>CP: checkpoint (AsyncPostgresSaver)
 
     LG-->>CC: interrupt — Human Gate
     CC-->>User: print spec for review
@@ -217,7 +224,7 @@ sequenceDiagram
     LG->>EN: asyncio subprocess (cwd=ARTIFACT_DIR)
     Note over EN: claude --model sonnet -p prompt<br/>claude writes files natively via built-in tools
     EN-->>LG: stdout → parse [submit] → artifact_paths
-    LG->>CP: checkpoint
+    LG->>CP: checkpoint (AsyncPostgresSaver)
 
     LG->>QA: asyncio subprocess (cwd=ARTIFACT_DIR)
     Note over QA: claude --model sonnet -p prompt<br/>claude runs tests natively
@@ -244,7 +251,7 @@ sequenceDiagram
 | 2 | LangGraph | invoke | — | state{request, job_id} | start graph |
 | 3 | ClaudeCodeBackend | `claude -p` subprocess | Haiku 4.5 | Full prompt + submit instruction | stdout JSON envelope |
 | 4 | parse_submit | regex `<submit>` | — | stdout text | tasks[] |
-| 5 | LangGraph | checkpoint | — | state + tasks | SQLite row |
+| 5 | LangGraph | checkpoint | — | state + tasks | Postgres row |
 | 6 | ClaudeCodeBackend | `claude -p` subprocess | Sonnet 4.6 | Full prompt (tasks + spec instruction) | stdout JSON envelope |
 | 7 | parse_submit | regex `<submit>` | — | stdout text | TechnicalSpec |
 | 8 | LangGraph | checkpoint + interrupt | — | state + spec | pause at human_gate |
@@ -252,7 +259,7 @@ sequenceDiagram
 | 10 | LangGraph | Command(resume) | — | "approve" | resume graph |
 | 11 | ClaudeCodeBackend | `claude -p` subprocess (cwd=ARTIFACT_DIR) | Sonnet 4.6 | Full prompt (spec + engineer instruction) | files written to disk + stdout |
 | 12 | parse_submit | regex `<submit>` | — | stdout text | artifact_paths |
-| 13 | LangGraph | checkpoint | — | state + artifact_paths | SQLite row |
+| 13 | LangGraph | checkpoint | — | state + artifact_paths | Postgres row |
 | 14 | ClaudeCodeBackend | `claude -p` subprocess (cwd=ARTIFACT_DIR) | Sonnet 4.6 | Full prompt (spec + artifacts + QA instruction) | test results + stdout |
 | 15 | parse_submit | regex `<submit>` | — | stdout text | TestReport |
 | 16 | route_qa | Python function | — | test_report.status | "done" / "engineer" / "analyser" / "failed" |
@@ -343,8 +350,8 @@ Hệ thống hỗ trợ 2 modes, chuyển đổi bằng một ENV variable — k
 | **Orchestration** | **LangGraph** | Built-in interrupt/checkpoint/resume, deterministic routing |
 | **Agent Framework** | Anthropic Agent SDK | Native Claude, MCP native, sub-agents |
 | **MCP Server** | FastMCP (Python) | ~60 dòng code, auto Pydantic schema |
-| **Checkpoint (dev)** | `SqliteSaver` | Zero setup, built into LangGraph |
-| **Checkpoint (prod)** | `PostgresSaver` | Concurrent jobs, durability — package: `langgraph-checkpoint-postgres` |
+| **Checkpoint** | `AsyncPostgresSaver` | Dùng cho cả dev và prod — SQLite đã bị xóa. Package: `langgraph-checkpoint-postgres>=2.0` |
+| **Container** | Docker + Docker Compose | Multi-stage build (Node→Python), Postgres 16-alpine |
 | **Artifact Storage** | Local filesystem (dev) → S3 (prod) | Không embed content trong checkpoint |
 | **Observability** | Langfuse (open-source, self-hosted) | Traces, cost, latency per agent |
 
@@ -476,7 +483,7 @@ MCP Server là cầu nối để VS Code (Claude Code hoặc Cline) tương tác
 | Cost vượt ngân sách (Mode A) | Trung bình | Token budget per agent, alert khi vượt ngưỡng |
 | Agent timeout / crash giữa chừng | Trung bình | LangGraph tự checkpoint sau mỗi node — resume tự động |
 | Artifact quá lớn làm bloat checkpoint | Trung bình | Lưu file vào `ARTIFACT_DIR`, chỉ store path trong state |
-| SQLite không support concurrent jobs | Trung bình | Swap sang `PostgresSaver` khi lên production |
+| Job registry (`_jobs`) mất khi restart server | Trung bình | LangGraph state trong Postgres vẫn OK — fix: persist `_jobs` vào DB |
 | Mode B throttle (Pro subscription limit) | Thấp | Monitor usage, switch sang Mode A |
 | Concurrent jobs dùng chung thread_id | Thấp | Luôn generate UUID cho mỗi job, pass làm `thread_id` |
 
@@ -537,7 +544,7 @@ Prod: S3 Standard — ~$0.023/GB/tháng
 |---|---|---|---|
 | **Phase 5 — UI** | Tuần 9–10 | React Dashboard + ReactFlow DAG + Langfuse | Full state tracking, cost dashboard |
 | **Phase 6 — Mode B** | Tuần 11–12 | Claude Code sub-agent adapter + LangGraph bridge | Mode B hoạt động, switch bằng ENV |
-| **Phase 7 — Production** | Tuần 13–14 | Docker + PostgresSaver + auth + rate limiting + S3 | Enterprise-ready deployment |
+| **Phase 7 — Production** ✅ | Tuần 13–14 | Docker + AsyncPostgresSaver + CORS + secret filtering + QA audit | Done 2026-05-10 |
 
 ### Build Order (phải theo thứ tự — mỗi bước validate bước trước)
 
@@ -552,6 +559,6 @@ Prod: S3 Standard — ~$0.023/GB/tháng
 8.  Analyser → Engineer → QA agents (theo thứ tự, validate từng agent)
 9.  Langfuse integration (callback handler vào LangGraph)
 10. React Dashboard (ReactFlow DAG + SSE consumer + cost display)
-11. PostgresSaver swap (dev→prod checkpoint migration)
+11. ✅ AsyncPostgresSaver — SQLite removed, Postgres-only (2026-05-10)
 12. Mode B adapter layer (Claude Code sub-agent → LangGraph invoke interface)
 ```

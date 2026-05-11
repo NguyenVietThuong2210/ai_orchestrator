@@ -9,8 +9,8 @@ requires-python = ">=3.11"
 dependencies = [
     # Orchestration
     "langgraph>=0.2",
-    "langgraph-checkpoint-sqlite>=0.1",     # SqliteSaver (dev)
-    # "langgraph-checkpoint-postgres>=0.1", # PostgresSaver (prod — uncomment when needed)
+    "langgraph-checkpoint-postgres>=2.0",   # AsyncPostgresSaver (PostgreSQL)
+    "psycopg[binary,pool]>=3.1",
 
     # LLM
     "anthropic>=0.40",

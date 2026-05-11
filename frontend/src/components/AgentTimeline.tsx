@@ -9,17 +9,37 @@ const AGENT_COLOR: Record<string, string> = {
 };
 
 const STATUS_ICON: Record<string, string> = {
-  done:       "✓",
-  running:    "…",
-  failed:     "✗",
-  pass:       "✓",
+  done:         "✓",
+  ok:           "✓",
+  running:      "…",
+  failed:       "✗",
+  pass:         "✓",
   "fail-minor": "⚠",
   "fail-major": "✗",
 };
 
+// Only surface meaningful LangGraph events to avoid noise
+const SHOW_SSE_EVENTS = new Set([
+  "on_chat_model_start",
+  "on_chat_model_end",
+  "on_tool_start",
+  "on_tool_end",
+  "on_retriever_start",
+  "on_retriever_end",
+]);
+
+const SSE_LABEL: Record<string, string> = {
+  on_chat_model_start: "🧠 model thinking…",
+  on_chat_model_end:   "🧠 model response",
+  on_tool_start:       "🔧 tool call",
+  on_tool_end:         "🔧 tool done",
+  on_retriever_start:  "📚 retriever",
+  on_retriever_end:    "📚 retrieved",
+};
+
 interface Props {
-  history: AgentEvent[];        // authoritative — from polling
-  sseEvents: SSEEvent[];        // real-time — from SSE stream
+  history: AgentEvent[];
+  sseEvents: SSEEvent[];
   iteration: number;
   qaAnalyserIteration: number;
 }
@@ -47,30 +67,38 @@ function AgentCard({ event }: { event: AgentEvent }) {
           <span>{event.duration_seconds.toFixed(1)}s</span>
         )}
         {event.tokens_used > 0 && (
-          <span>{event.tokens_used.toLocaleString()} tokens</span>
+          <span>{event.tokens_used.toLocaleString()} tok</span>
         )}
-        <span>{new Date(event.timestamp).toLocaleTimeString()}</span>
+        <span className="ml-auto">{new Date(event.timestamp).toLocaleTimeString()}</span>
       </div>
     </div>
   );
 }
 
 function SSERow({ e }: { e: SSEEvent }) {
-  if (e.event === "on_chain_start" || e.event === "on_chain_end") return null;
+  if (!SHOW_SSE_EVENTS.has(e.event)) return null;
+  const label = SSE_LABEL[e.event] ?? e.event;
+  const detail = e.name && e.name !== e.event ? e.name : "";
   return (
-    <div className="flex gap-2 text-xs font-mono text-gray-500 py-0.5 px-1">
-      <span className="opacity-50">{e.event}</span>
-      {e.name && <span className="text-gray-700">{e.name}</span>}
+    <div className="flex items-center gap-2 text-xs font-mono text-gray-500 py-0.5 px-1">
+      <span className="opacity-70 shrink-0">{label}</span>
+      {detail && (
+        <span className="text-gray-400 truncate text-[10px]" title={detail}>
+          {detail.length > 30 ? detail.slice(0, 30) + "…" : detail}
+        </span>
+      )}
     </div>
   );
 }
 
-export function AgentTimeline({ history, sseEvents }: Props) {
+export function AgentTimeline({ history, sseEvents, iteration, qaAnalyserIteration }: Props) {
   const bottomRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [history.length, sseEvents.length]);
+
+  const visibleSSE = sseEvents.filter((e) => SHOW_SSE_EVENTS.has(e.event)).slice(-10);
 
   return (
     <div className="space-y-2">
@@ -80,14 +108,31 @@ export function AgentTimeline({ history, sseEvents }: Props) {
         </div>
       )}
 
+      {/* Retry counters — shown only when retries have happened */}
+      {(iteration > 0 || qaAnalyserIteration > 0) && (
+        <div className="flex gap-2 px-1">
+          {iteration > 0 && (
+            <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-100 text-amber-700 font-mono">
+              eng retry {iteration}×
+            </span>
+          )}
+          {qaAnalyserIteration > 0 && (
+            <span className="text-[10px] px-1.5 py-0.5 rounded bg-red-100 text-red-700 font-mono">
+              spec retry {qaAnalyserIteration}×
+            </span>
+          )}
+        </div>
+      )}
+
       {history.map((event, i) => (
         <AgentCard key={i} event={event} />
       ))}
 
-      {/* Live SSE events */}
-      {sseEvents.length > 0 && (
-        <div className="rounded-lg border border-dashed border-gray-200 bg-gray-50 px-2 py-1 space-y-0.5">
-          {sseEvents.slice(-20).map((e, i) => (
+      {/* Live SSE — only meaningful events, last 10 */}
+      {visibleSSE.length > 0 && (
+        <div className="rounded-lg border border-dashed border-gray-200 bg-gray-50 px-2 py-1.5 space-y-0.5">
+          <p className="text-[9px] uppercase tracking-widest text-gray-400 mb-1 px-1">Live</p>
+          {visibleSSE.map((e, i) => (
             <SSERow key={i} e={e} />
           ))}
         </div>

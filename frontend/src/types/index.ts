@@ -72,6 +72,15 @@ export interface RunPipelineResponse {
   message: string;
 }
 
+export interface JobSummary {
+  job_id: string;
+  status: string;
+}
+
+export interface JobListResponse {
+  jobs: JobSummary[];
+}
+
 // UI-layer SSE event (parsed from EventSource)
 export interface SSEEvent {
   event: string;

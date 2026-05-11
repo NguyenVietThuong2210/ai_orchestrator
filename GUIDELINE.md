@@ -3,116 +3,179 @@
 ## Table of Contents
 
 1. [Prerequisites](#1-prerequisites)
-2. [Installation](#2-installation)
-3. [Environment Configuration](#3-environment-configuration)
-4. [Running the Pipeline](#4-running-the-pipeline)
-   - [Option 1 — MCP Server · VS Code / Claude Code ⭐ recommended](#41-option-1--mcp-server--vs-code--claude-code--recommended)
-   - [Option 2 — Claude Code Agent CLI](#42-option-2--claude-code-agent-cli)
-   - [Option 3 — REST API](#43-option-3--rest-api)
-   - [Option 4 — Python CLI](#44-option-4--python-cli)
-5. [Human Gate — Approval Flow](#5-human-gate--approval-flow)
-6. [Checkpoint & Resume](#6-checkpoint--resume)
-7. [Environment Variable Reference](#7-environment-variable-reference)
-8. [Frontend UI](#8-frontend-ui)
-9. [Running Tests](#9-running-tests)
-10. [Troubleshooting](#10-troubleshooting)
-11. [End-to-End Example: Django Hello App](#11-end-to-end-example-django-hello-app)
+2. [Quick Start — Docker (recommended)](#2-quick-start--docker-recommended)
+3. [Local Development Setup](#3-local-development-setup)
+4. [Environment Variable Reference](#4-environment-variable-reference)
+5. [Running the Pipeline](#5-running-the-pipeline)
+   - [Option 1 — MCP Server · VS Code / Claude Code ⭐](#51-option-1--mcp-server--vs-code--claude-code-)
+   - [Option 2 — Frontend UI](#52-option-2--frontend-ui)
+   - [Option 3 — REST API](#53-option-3--rest-api)
+   - [Option 4 — Python CLI](#54-option-4--python-cli)
+6. [Human Gate — Approval Flow](#6-human-gate--approval-flow)
+7. [Checkpoint & Resume](#7-checkpoint--resume)
+8. [Running Tests](#8-running-tests)
+9. [Troubleshooting](#9-troubleshooting)
+10. [End-to-End Example: Django Hello App](#10-end-to-end-example-django-hello-app)
 
 ---
 
 ## 1. Prerequisites
 
-| Requirement | Minimum version | Notes |
+| Requirement | Minimum | Notes |
 |---|---|---|
-| Python | 3.11+ | `python --version` |
-| Claude Code CLI | latest | `npm i -g @anthropic-ai/claude-code` then `claude --version` |
-| Claude Code Pro subscription | — | Mode B uses the CLI; an active subscription is required |
-| Node.js | 18+ | Required by Claude Code CLI |
-| Git | any | Optional — only needed for artifact versioning |
+| Docker + Docker Compose | 24+ | For the recommended setup |
+| Python | 3.11+ | For local dev only |
+| Node.js | 18+ | For frontend dev only |
+| Claude Code CLI | latest | `npm i -g @anthropic-ai/claude-code` |
+| Claude Pro subscription | — | Mode B (default) uses CLI auth |
+| PostgreSQL | 16+ | Provided by Docker; or bring your own |
 
-> **Mode A (API)**: Set `AI_BACKEND=api` and provide `ANTHROPIC_API_KEY`. No Claude Code CLI needed.  
-> **Mode B (Claude Code CLI, default)**: Set `AI_BACKEND=claude_code` (or leave unset). Claude Pro subscription required.
+> **Mode A (API key):** Set `AI_BACKEND=api` + `ANTHROPIC_API_KEY`. Claude Code CLI not required.  
+> **Mode B (default):** Set `AI_BACKEND=claude_code`. Uses Claude Pro subscription via CLI.
 
 ---
 
-## 2. Installation
+## 2. Quick Start — Docker (recommended)
 
 ```bash
-# 1. Clone / enter the project
-cd d:/New-jouney/ai_orchestrator
+# 1. Clone and enter the project
+cd ai_orchestrator
 
-# 2. Install with dev dependencies
+# 2. Create your env file
+cp .env.docker .env
+# Edit .env — change POSTGRES_PASSWORD at minimum
+
+# 3. Build and start (Postgres + backend + frontend)
+docker-compose up --build
+
+# Frontend + API:  http://localhost:8000
+# API docs:        http://localhost:8000/docs
+# Postgres:        localhost:5432
+```
+
+**To stop:**
+```bash
+docker-compose down          # stop containers, keep data
+docker-compose down -v       # stop + delete Postgres volume
+```
+
+**To rebuild after code changes:**
+```bash
+docker-compose up --build
+```
+
+---
+
+## 3. Local Development Setup
+
+### 3.1 Start PostgreSQL
+
+You need a running PostgreSQL instance. Easiest with Docker:
+
+```bash
+docker run -d \
+  --name orchestrator-pg \
+  -e POSTGRES_DB=orchestrator \
+  -e POSTGRES_USER=orchestrator \
+  -e POSTGRES_PASSWORD=orchestrator \
+  -p 5432:5432 \
+  postgres:16-alpine
+```
+
+Or use an existing local Postgres — just create a database:
+
+```sql
+CREATE DATABASE orchestrator;
+CREATE USER orchestrator WITH PASSWORD 'orchestrator';
+GRANT ALL PRIVILEGES ON DATABASE orchestrator TO orchestrator;
+```
+
+### 3.2 Install Python dependencies
+
+```bash
 pip install -e ".[dev]"
-
-# 3. Copy the example env file and fill in your values
-copy .env.example .env
 ```
 
-Verify the install:
+### 3.3 Configure environment
 
 ```bash
-python -c "import orchestrator; print('OK')"
-pytest --tb=short          # should show 33 passed, 0 failed
+cp .env.docker .env
 ```
 
----
-
-## 3. Environment Configuration
-
-Copy `.env.example` to `.env` and edit:
+Edit `.env`:
 
 ```dotenv
-# ── Backend mode ────────────────────────────────────────────────────
-AI_BACKEND=claude_code          # "claude_code" (Mode B) | "api" (Mode A)
-
-# ── Mode A — Anthropic API (only needed when AI_BACKEND=api) ────────
-ANTHROPIC_API_KEY=sk-ant-...
-
-PM_MODEL_A=claude-haiku-4-5-20251001
-ANALYSER_MODEL_A=claude-opus-4-7
-ENGINEER_MODEL_A=claude-sonnet-4-6
-QA_MODEL_A=claude-sonnet-4-6
-
-# ── Mode B — Claude Code CLI ─────────────────────────────────────────
-PM_MODEL_B=claude-haiku-4-5-20251001
-ANALYSER_MODEL_B=claude-sonnet-4-6
-ENGINEER_MODEL_B=claude-sonnet-4-6
-QA_MODEL_B=claude-sonnet-4-6
-
-# ── Orchestrator tuning ──────────────────────────────────────────────
-MAX_QA_ITERATIONS=3             # max Engineer retries before pipeline fails
-CHECKPOINT_DB=./data/checkpoints.sqlite
-
-# ── Observability (optional) ─────────────────────────────────────────
-# LANGFUSE_PUBLIC_KEY=...
-# LANGFUSE_SECRET_KEY=...
-LOG_LEVEL=INFO
+DATABASE_URL=postgresql://orchestrator:orchestrator@localhost:5432/orchestrator
+AI_BACKEND=claude_code
 ```
 
-> All model settings are read **at runtime** (after `load_dotenv()`), so you can change them without restarting the interpreter.
-
----
-
-## 4. Running the Pipeline
-
-> **Priority order:** MCP → Agent CLI → REST API → Python CLI.  
-> MCP and Agent CLI are the primary interfaces — they integrate directly into your editor workflow without switching context.
-
----
-
-### 4.1 Option 1 — MCP Server · VS Code / Claude Code ⭐ recommended
-
-The MCP server exposes the orchestrator as tools inside Claude Code (VS Code extension or desktop app). You interact in plain language — Claude calls the tools for you.
-
-**Step 1 — Start the backend**
+### 3.4 Start the backend
 
 ```bash
 uvicorn api.main:app --reload --port 8000
 ```
 
-**Step 2 — Register the MCP server**
+On startup, LangGraph automatically creates its checkpoint tables in Postgres (via `checkpointer.setup()`).
 
-Create or update `.mcp.json` in the project root:
+### 3.5 Start the frontend (dev mode with hot reload)
+
+```bash
+cd frontend
+npm install   # first time only
+npm run dev
+# → http://localhost:5173  (proxies /api → :8000)
+```
+
+### 3.6 Build frontend for production
+
+```bash
+cd frontend && npm run build
+# FastAPI serves frontend/dist/ at http://localhost:8000
+```
+
+---
+
+## 4. Environment Variable Reference
+
+| Variable | Required | Default | Description |
+|---|---|---|---|
+| `DATABASE_URL` | **yes** | — | PostgreSQL connection string |
+| `AI_BACKEND` | no | `claude_code` | `claude_code` (Mode B) or `api` (Mode A) |
+| `ANTHROPIC_API_KEY` | Mode A only | — | Anthropic API key |
+| `PM_MODEL_B` | no | `claude-haiku-4-5-20251001` | PM agent model, Mode B |
+| `ANALYSER_MODEL_B` | no | `claude-sonnet-4-6` | Analyser model, Mode B |
+| `ENGINEER_MODEL_B` | no | `claude-sonnet-4-6` | Engineer model, Mode B |
+| `QA_MODEL_B` | no | `claude-sonnet-4-6` | QA model, Mode B |
+| `PM_MODEL` | no | `claude-haiku-4-5-20251001` | PM agent model, Mode A |
+| `ANALYSER_MODEL` | no | `claude-opus-4-7` | Analyser model, Mode A |
+| `ENGINEER_MODEL` | no | `claude-sonnet-4-6` | Engineer model, Mode A |
+| `QA_MODEL` | no | `claude-sonnet-4-6` | QA model, Mode A |
+| `MAX_QA_ITERATIONS` | no | `3` | Max Engineer retries before pipeline fails |
+| `MAX_QA_ANALYSER_ITERATIONS` | no | `2` | Max Analyser re-spec cycles before pipeline fails |
+| `ARTIFACT_DIR` | no | `./artifacts` | Directory where Engineer writes files |
+| `PROJECTS_ROOT` | no | `./projects` | Root directory for project + spec folders |
+| `LOG_LEVEL` | no | `INFO` | `DEBUG` / `INFO` / `WARNING` |
+| `POSTGRES_DB` | Docker only | `orchestrator` | PostgreSQL database name |
+| `POSTGRES_USER` | Docker only | `orchestrator` | PostgreSQL user |
+| `POSTGRES_PASSWORD` | Docker only | — | PostgreSQL password — **change in production** |
+
+> `DATABASE_URL` is the only hard requirement. The server will refuse to start without it and print a clear error message.
+
+---
+
+## 5. Running the Pipeline
+
+> **Priority order:** MCP → Frontend UI → REST API → Python CLI.
+
+---
+
+### 5.1 Option 1 — MCP Server · VS Code / Claude Code ⭐
+
+The MCP server exposes orchestrator tools directly inside Claude Code. You interact in plain language.
+
+**Step 1 — Start the backend** (Docker or local dev, see §2/§3)
+
+**Step 2 — Register the MCP server** (`.mcp.json` in project root):
 
 ```json
 {
@@ -120,155 +183,90 @@ Create or update `.mcp.json` in the project root:
     "ai-orchestrator": {
       "command": "python",
       "args": ["mcp_server/server.py"],
-      "cwd": "d:/New-jouney/ai_orchestrator"
+      "cwd": "/path/to/ai_orchestrator"
     }
   }
 }
 ```
 
-Restart Claude Code. The tools appear automatically.
-
-**Step 3 — Use in Claude Code**
-
-Just talk to Claude:
+**Step 3 — Use in Claude Code:**
 
 ```
 Run the pipeline: build a Django hello-world app in projects/hello_django/
 ```
 
-Claude calls `run_pipeline` → streams back status → pauses when the spec is ready → asks you to review → calls `approve_spec` when you say yes.
+Claude calls `run_pipeline` → streams status → pauses at Human Gate → asks you to review → calls `approve_spec` when you say yes.
 
-**Available MCP primitives:**
+**Available MCP tools:**
 
-| Type | Name | What it does |
-|---|---|---|
-| Tool | `run_pipeline` | Start a new pipeline with a requirement |
-| Tool | `get_job_status` | Check status, read spec, history, test report |
-| Tool | `approve_spec` | Approve the Analyser spec → start Engineering |
-| Tool | `cancel_job` | Cancel a running job |
-| Resource | `project_spec` | Read the current technical spec |
-| Resource | `test_report` | Read the QA test report |
-| Resource | `agent_logs` | Read the full agent event history |
-| Prompt | `/build-feature` | Guided prompt to start a feature build |
-| Prompt | `/review-spec` | Guided prompt to review a pending spec |
-| Prompt | `/run-qa` | Guided prompt to trigger a QA pass |
-
-**Human Gate via MCP:**
-
-When the pipeline pauses at Human Gate, Claude will show you the spec and ask for approval. Say:
-
-```
-Looks good, approve it.
-```
-
-Claude calls `approve_spec` → Engineering starts automatically.
-
-To reject:
-
-```
-Reject — the spec is missing authentication.
-```
+| Tool | What it does |
+|---|---|
+| `run_pipeline` | Start a new pipeline with a requirement |
+| `get_job_status` | Check status, read spec, history, test report |
+| `approve_spec` | Approve the Analyser spec → start Engineering |
+| `cancel_job` | Cancel a running job |
 
 ---
 
-### 4.2 Option 2 — Claude Code Agent CLI
+### 5.2 Option 2 — Frontend UI
 
-Run the orchestrator as a Claude Code sub-agent directly from your terminal. This is the fastest way to kick off a pipeline without opening a browser or editor.
-
-**Prerequisite:** Claude Code CLI installed and logged in.
-
-```bash
-# Make sure the Claude Code session is active
-claude --version
-
-# Run the orchestrator as a sub-agent (Mode B)
-claude -p "Run the AI orchestrator pipeline with this requirement:
-Build a Django hello-world app in projects/hello_django/.
-Use the orchestrator tool: run_pipeline." \
-  --mcp-config .mcp.json
-```
-
-Or use the built-in `/build-feature` prompt:
-
-```bash
-claude --mcp-config .mcp.json
-# Inside the session:
-/build-feature
-```
-
-Claude will ask for the requirement, call `run_pipeline`, stream events, pause at Human Gate, and wait for your approval — all inside the terminal session.
-
-**Approve from the same session:**
+Open `http://localhost:8000` (production) or `http://localhost:5173` (dev).
 
 ```
-/review-spec
-# Claude shows the spec, you say "approve"
+┌─ Header ────────────────────────────────────────────────────────┐
+│  🤖 AI Orchestrator  [job-id]  [PM→Analyser→Review→Eng→QA]  [●] │
+├─ Sidebar (w-60) ──┬─ Timeline (w-72) ──┬─ Right Panel ─────────┤
+│  Requirement form │  Real-time events  │  Tabs:                │
+│  Project path     │  Agent cards       │    Spec Review        │
+│  Stat tiles       │  SSE live feed     │    QA Report          │
+│  PM Task board    │                    │    Artifacts          │
+│                   │                    │  [Sticky Approve bar] │
+└───────────────────┴────────────────────┴───────────────────────┘
 ```
+
+**Key interactions:**
+- Enter requirement → **Run ▶** → watch pipeline progress in the timeline
+- When status hits "Needs Review" → right panel auto-switches to Spec Review → click **✓ Approve**
+- After QA completes → right panel auto-switches to QA Report
 
 ---
 
-### 4.3 Option 3 — REST API
-
-For programmatic access, CI/CD pipelines, or the Frontend UI.
+### 5.3 Option 3 — REST API
 
 ```bash
-uvicorn api.main:app --reload --port 8000
-```
-
-**Start a pipeline**
-
-```bash
+# Start a pipeline
 curl -X POST http://localhost:8000/run-pipeline \
   -H "Content-Type: application/json" \
   -d '{"requirement": "Build a REST API for a todo app"}'
-```
+# → {"job_id": "a1b2c3d4", "status": "started"}
 
-```json
-{ "job_id": "a1b2c3d4", "status": "started" }
-```
-
-**Poll status**
-
-```bash
+# Poll status
 curl http://localhost:8000/status/a1b2c3d4
-```
 
-```json
-{
-  "job_id": "a1b2c3d4",
-  "status": "waiting_approval",
-  "spec": { "overview": "..." }
-}
-```
-
-**Approve**
-
-```bash
+# Approve spec
 curl -X POST http://localhost:8000/approve-spec \
   -H "Content-Type: application/json" \
   -d '{"job_id": "a1b2c3d4", "decision": "approve"}'
-```
 
-**Stream real-time events (SSE)**
-
-```bash
+# Stream real-time events (SSE)
 curl -N http://localhost:8000/stream/a1b2c3d4
+
+# Cancel
+curl -X POST http://localhost:8000/cancel/a1b2c3d4
 ```
 
-Full API docs: `http://localhost:8000/docs`
+Full interactive docs: `http://localhost:8000/docs`
 
 ---
 
-### 4.4 Option 4 — Python CLI
+### 5.4 Option 4 — Python CLI
 
-Quickest way to test the pipeline locally without any server.
+Requires `DATABASE_URL` in environment:
 
 ```bash
-# Start a new run
-python -m orchestrator.runner "Build a REST API for a todo app"
+export DATABASE_URL=postgresql://orchestrator:orchestrator@localhost:5432/orchestrator
 
-# Resume a paused job (e.g. after Human Gate)
-python -m orchestrator.runner "" --job-id a1b2c3d4
+python -m orchestrator.runner "Build a REST API for a todo app"
 ```
 
 Output:
@@ -288,322 +286,173 @@ Approve spec? [approve/reject]: approve
 
 ---
 
-## 5. Human Gate — Approval Flow
+## 6. Human Gate — Approval Flow
 
-The pipeline **always pauses** after the Analyser writes the technical spec, before any code is written. This is your only chance to correct the direction before Engineering starts.
+The pipeline **always pauses** after the Analyser writes the technical spec. No code is written until you approve.
 
 ```
-PM → Analyser → ⏸ PAUSE (you review spec here) → Engineer → QA → DONE
+PM → Analyser → ⏸ PAUSE (review here) → Engineer → QA → DONE
 ```
 
-### What you see at each interface
-
-| Interface | How the pause appears |
+| Interface | How pause appears |
 |---|---|
-| **MCP / Claude Code** | Claude presents the spec in chat and asks for your decision |
-| **Agent CLI** | Claude outputs the spec and prompts `/review-spec` |
-| **Frontend UI** | Main panel switches to "Spec Review" with Approve / Reject buttons |
+| **MCP / Claude Code** | Claude presents spec in chat, asks for decision |
+| **Frontend UI** | Status → "Needs Review", right panel switches to Spec Review, sticky Approve banner appears |
 | **REST API** | `GET /status/{job_id}` returns `"status": "waiting_approval"` + full spec |
 | **Python CLI** | Prints spec overview, prompts `[approve/reject]:` |
 
-### Approve — start Engineering
+### Approve
 
-**MCP / Agent CLI:** say `"approve"` or `"looks good, proceed"` in the chat.
+- **MCP:** say `"approve"` in chat
+- **Frontend UI:** click **✓ Approve — Start Engineering**
+- **REST API:** `POST /approve-spec` with `{"decision": "approve"}`
+- **Python CLI:** type `approve`
 
-**Frontend UI:** click the green **Approve — Start Engineering ▶** button.
+### Reject
 
-**REST API:**
-```bash
-curl -X POST http://localhost:8000/approve-spec \
-  -H "Content-Type: application/json" \
-  -d '{"job_id": "<job_id>", "decision": "approve"}'
-```
+- **MCP:** say `"reject"` — Claude calls `cancel_job`
+- **Frontend UI:** click **✗ Reject**
+- **REST API:** `POST /approve-spec` with `{"decision": "reject"}`
 
-**Python CLI:** type `approve` at the prompt.
-
-### Reject — cancel and restart
-
-**MCP / Agent CLI:** say `"reject"` or describe what's wrong — Claude will call `cancel_job`.
-
-**Frontend UI:** click **Reject & Cancel**.
-
-**REST API:**
-```bash
-curl -X POST http://localhost:8000/approve-spec \
-  -H "Content-Type: application/json" \
-  -d '{"job_id": "<job_id>", "decision": "reject"}'
-```
-
-> The job is checkpointed at the pause point. If you close everything and come back later, the spec is still there — just call approve/reject when ready.
+> The checkpoint is saved at the pause point in PostgreSQL. You can close everything and come back later — the spec is still there.
 
 ---
 
-## 6. Checkpoint & Resume
+## 7. Checkpoint & Resume
 
-Every agent step is checkpointed to SQLite automatically. If the pipeline crashes, the session closes, or you shut everything down — resume from the exact same node without restarting from scratch.
+Every agent step is checkpointed to PostgreSQL automatically. If the server restarts mid-pipeline, the job can be resumed from the exact same node.
 
-**MCP / Agent CLI:**
-
+**Resume via MCP:**
 ```
 Resume job a1b2c3d4
 ```
 
-Claude calls `run_pipeline` with the existing `job_id` → LangGraph resumes from the last checkpoint.
-
-**Python CLI:**
-
-```bash
-python -m orchestrator.runner "" --job-id <job_id>
-```
-
-**REST API:**
-
+**Resume via REST API:**
 ```bash
 curl -X POST http://localhost:8000/run-pipeline \
   -H "Content-Type: application/json" \
-  -d '{"requirement": "", "job_id": "<job_id>"}'
+  -d '{"requirement": "", "job_id": "a1b2c3d4"}'
 ```
 
-Checkpoint file: `./data/checkpoints.sqlite` (change with `CHECKPOINT_DB` in `.env`).
+**Resume via Python CLI:**
+```bash
+python -m orchestrator.runner "" --job-id a1b2c3d4
+```
+
+> Checkpoint tables (`checkpoints`, `checkpoint_writes`, `checkpoint_migrations`) are created automatically by LangGraph on first startup. Never delete them while jobs are running.
 
 ---
 
-## 7. Environment Variable Reference
-
-| Variable | Default | Description |
-|---|---|---|
-| `AI_BACKEND` | `claude_code` | `claude_code` or `api` |
-| `ANTHROPIC_API_KEY` | — | Required for Mode A only |
-| `PM_MODEL_A` | `claude-haiku-4-5-20251001` | PM model, Mode A |
-| `ANALYSER_MODEL_A` | `claude-opus-4-7` | Analyser model, Mode A |
-| `ENGINEER_MODEL_A` | `claude-sonnet-4-6` | Engineer model, Mode A |
-| `QA_MODEL_A` | `claude-sonnet-4-6` | QA model, Mode A |
-| `PM_MODEL_B` | `claude-haiku-4-5-20251001` | PM model, Mode B |
-| `ANALYSER_MODEL_B` | `claude-sonnet-4-6` | Analyser model, Mode B |
-| `ENGINEER_MODEL_B` | `claude-sonnet-4-6` | Engineer model, Mode B |
-| `QA_MODEL_B` | `claude-sonnet-4-6` | QA model, Mode B |
-| `MAX_QA_ITERATIONS` | `3` | Max Engineer retries before pipeline fails |
-| `CHECKPOINT_DB` | `./data/checkpoints.sqlite` | SQLite checkpoint path |
-| `LOG_LEVEL` | `INFO` | `DEBUG` / `INFO` / `WARNING` |
-| `LANGFUSE_PUBLIC_KEY` | — | Observability (optional) |
-| `LANGFUSE_SECRET_KEY` | — | Observability (optional) |
-
----
-
-## 8. Frontend UI
-
-A React SPA built with Vite + TypeScript + Tailwind CSS. It provides:
-- **Requirement form** — enter a prompt and click Run
-- **Real-time agent timeline** — streams SSE events as each agent works
-- **Spec review panel** — displays the Analyser's technical spec with Approve / Reject buttons (Human Gate)
-- **QA report** — shows passed/failed tests and defect list
-- **Artifact list** — lists all files written by the Engineer
-
-### Layout
-
-```
-┌────────────────────────────────────────────────────────┐
-│  🤖 AI Orchestrator          [job-id]   [status]  Docs │  ← header
-├──────────────────┬─────────────────────────────────────┤
-│  New Pipeline    │                                     │
-│  ─────────────   │  idle      → welcome / agent cards  │
-│  [requirement    │  running   → real-time timeline     │
-│   textarea]      │  approval  → spec review + buttons  │
-│                  │  done      → QA report + artifacts  │
-│  [Run ▶]        │  failed    → error + last QA report  │
-│  ─────────────   │                                     │
-│  Steps           │                                     │
-│  ✓ PM            │                                     │
-│  ✓ Analyser      │                                     │
-│  · Review        │                                     │
-│  · Engineer      │                                     │
-│  · QA            │                                     │
-└──────────────────┴─────────────────────────────────────┘
-```
-
-### Development mode (hot reload)
+## 8. Running Tests
 
 ```bash
-# Terminal 1 — start API backend
-uvicorn api.main:app --reload --port 8000
-
-# Terminal 2 — start Vite dev server
-cd frontend
-npm install      # first time only
-npm run dev
-# → http://localhost:5173
-```
-
-Vite proxies all API calls (`/run-pipeline`, `/status/*`, `/stream/*`, etc.) to `http://localhost:8000` automatically — no CORS issues.
-
-### Production mode (served by FastAPI)
-
-```bash
-cd frontend
-npm run build        # outputs to frontend/dist/
-
-cd ..
-uvicorn api.main:app --reload
-# → http://localhost:8000   (serves the React app)
-# → http://localhost:8000/docs  (FastAPI Swagger, still accessible)
-```
-
-FastAPI detects `frontend/dist/` at startup and mounts it as static files. All non-API paths return `index.html` (SPA fallback).
-
-### Frontend file structure
-
-```
-frontend/
-├── src/
-│   ├── App.tsx                 # sidebar layout + state-driven main panel
-│   ├── types/index.ts          # TypeScript types mirroring backend schemas
-│   ├── api/client.ts           # typed fetch wrappers (runPipeline, approveSpec, …)
-│   ├── hooks/
-│   │   ├── useSSE.ts           # EventSource with auto-close on stream_end
-│   │   └── usePipeline.ts      # state machine: idle→starting→running→approval→done/failed
-│   └── components/
-│       ├── StatusBadge.tsx
-│       ├── PipelineForm.tsx    # textarea + Run/Cancel
-│       ├── AgentTimeline.tsx   # SSE events + polling history
-│       ├── SpecReview.tsx      # overview, components, API contracts, Approve/Reject
-│       ├── ArtifactList.tsx    # engineer output files
-│       └── TestReport.tsx      # pass/fail/defects
-├── package.json
-├── vite.config.ts
-└── tsconfig.json
-```
-
----
-
-## 9. Running Tests
-
-```bash
-# All tests (33 total, offline — no claude CLI or API required)
+# All tests
 pytest
 
-# Verbose output
+# Verbose
 pytest -v
 
-# Single test file
+# Specific file
 pytest tests/test_backends.py -v
 pytest tests/test_graph.py -v
-pytest tests/test_context.py -v
-
-# Single test
-pytest tests/test_backends.py::test_get_model_defaults -v
 
 # Lint
 ruff check .
 ruff format --check .
 ```
 
-**Test coverage:**
-
-| File | What is tested |
-|---|---|
-| `test_backends.py` | Model selection, `_extract_submit_data`, `build_prompt`, `parse_submit` |
-| `test_graph.py` | `route_qa` routing, `handle_done/failed`, agent `parse_submit` |
-| `test_context.py` | `ProjectContext` TypedDict structure |
-
-All tests are **fully offline** — no subprocess or API call is made.
+> Tests are fully offline — no subprocess, no API call, no database required.
 
 ---
 
-## 10. Troubleshooting
+## 9. Troubleshooting
+
+### `RuntimeError: DATABASE_URL is not set`
+
+The server requires a PostgreSQL connection string.
+
+```bash
+export DATABASE_URL=postgresql://user:pass@localhost:5432/orchestrator
+# or add it to .env
+```
+
+---
+
+### `connection refused` to PostgreSQL
+
+Postgres is not running or unreachable.
+
+```bash
+# Check Docker container
+docker ps | grep postgres
+docker logs orchestrator-pg
+
+# Or start via docker-compose
+docker-compose up postgres
+```
+
+---
 
 ### `No <submit> block found in output`
 
-The Claude Code CLI response did not include the required `<submit>...</submit>` JSON block.
+The claude subprocess response did not include the required `<submit>...</submit>` JSON block.
 
-**Cause:** The model ran out of context, was interrupted, or the prompt was misunderstood.
+**Cause:** Model ran out of context, was interrupted, or misunderstood the prompt.
 
 **Fix:**
-- Re-run the pipeline (checkpoint resumes from the failed node).
-- For persistent failures, upgrade the model (`ANALYSER_MODEL_B=claude-sonnet-4-6` → `claude-opus-4-7`).
-- Check `LOG_LEVEL=DEBUG` output for the raw claude output.
+- Re-run (checkpoint resumes from the failed node)
+- Upgrade model: `ANALYSER_MODEL_B=claude-opus-4-7`
+- Set `LOG_LEVEL=DEBUG` to see raw claude output
 
 ---
 
 ### `json.JSONDecodeError` inside `<submit>` block
 
-The model produced malformed JSON inside the submit block.
+Model produced malformed JSON in the submit block.
 
-**Fix:** Same as above — retry or upgrade model. With `LOG_LEVEL=DEBUG` you can see the raw output.
+**Fix:** Retry or upgrade model. `LOG_LEVEL=DEBUG` shows raw output.
 
 ---
 
-### `claude: command not found`
+### `claude.cmd: command not found` (Windows)
 
-Claude Code CLI is not installed or not on `PATH`.
+Claude Code CLI is not installed or not on PATH.
 
 ```bash
 npm i -g @anthropic-ai/claude-code
 claude --version
 ```
 
----
-
-### `Session closed` / `Rate limit exceeded`
-
-Claude Code Pro has session/rate limits.
-
-**Fix:** Wait a few minutes and re-run. The checkpoint will resume from where it stopped.
+> On Windows, the CLI is `claude.cmd`. The backend calls it via `claude.cmd` automatically — no manual change needed.
 
 ---
 
-### `ModuleNotFoundError: No module named 'orchestrator'`
+### `Cannot be launched inside another Claude Code session`
 
-The package is not installed in the current Python environment.
+The `CLAUDECODE` environment variable is set in the parent process, blocking nested `claude` calls.
 
-```bash
-pip install -e ".[dev]"
-```
-
-Or run from the project root with:
-
-```bash
-PYTHONPATH=. python -m orchestrator.runner "..."
-```
+**Fix:** The backend strips `CLAUDECODE` from subprocess env automatically. If you see this error, check that you're running the latest `claude_code_backend.py`.
 
 ---
 
-### Pipeline status stuck at `waiting_approval`
+### Pipeline stuck at `waiting_approval`
 
-The Human Gate is paused and waiting for your explicit approval. Use whichever interface you started with:
+The Human Gate is paused, waiting for your approval.
 
-**MCP / Agent CLI:** say `"approve"` in the chat session.
-
-**Frontend UI:** click the green **Approve — Start Engineering ▶** button.
-
-**REST API:**
-```bash
-curl -X POST http://localhost:8000/approve-spec \
-  -H "Content-Type: application/json" \
-  -d '{"job_id": "<job_id>", "decision": "approve"}'
-```
+- **Frontend UI:** click the **✓ Approve** button in the sticky banner
+- **REST API:** `POST /approve-spec` with `{"job_id": "...", "decision": "approve"}`
+- **MCP:** say `"approve"` in Claude Code chat
 
 ---
 
 ### `iteration` keeps hitting `MAX_QA_ITERATIONS`
 
-The Engineer and QA are in a fail loop.
+Engineer and QA are in a fail loop.
 
-**Diagnose:**
-1. `GET /status/{job_id}` — check `test_report.defects` for recurring defects.
-2. `GET /status/{job_id}` → `history` — check what the Engineer is doing each iteration.
-
-**Fix options:**
-- Increase `MAX_QA_ITERATIONS` temporarily.
-- Add more detail to the original request.
-- Upgrade `ENGINEER_MODEL_B` to a more capable model.
-
----
-
-### `SqliteSaver` checkpoint database locked
-
-Another process has the SQLite file open.
-
-**Fix:** Stop all orchestrator processes and retry. Or set a different `CHECKPOINT_DB` path.
+1. `GET /status/{job_id}` → check `test_report.defects` for recurring issues
+2. Increase `MAX_QA_ITERATIONS` temporarily
+3. Add more detail to the original requirement
+4. Upgrade `ENGINEER_MODEL_B` to a more capable model
 
 ---
 
@@ -612,70 +461,38 @@ Another process has the SQLite file open.
 | Status | Meaning |
 |---|---|
 | `running` | Pipeline is actively executing an agent |
-| `waiting_approval` | Paused at Human Gate — awaiting your approval |
-| `done` | All agents completed; artifacts are available |
+| `waiting_approval` | Paused at Human Gate — awaiting approval |
+| `done` | All agents completed; artifacts available |
 | `failed` | Max iterations exceeded or unrecoverable error |
 
 ---
 
-## 11. End-to-End Example: Django Hello App
+## 10. End-to-End Example: Django Hello App
 
-**Goal:** Build a minimal Django "Hello World" app, output saved under `projects/hello_django/`.
+**Goal:** Build a minimal Django "Hello World" app under `projects/hello_django/`.
 
-This walks through every pipeline step — what happens internally, what you see on screen, and how to verify each stage is complete.
-
----
-
-### Overview: How your prompt maps to the pipeline
+### Pipeline flow
 
 ```
 Your prompt
-    │
-    ▼
-[PM Agent]          → breaks requirement into tasks
-    │
-    ▼
-[Analyser Agent]    → writes technical spec (Django project layout, views, urls)
-    │
-    ▼
-[Human Gate]        ← YOU review + approve the spec here
-    │
-    ▼
-[Engineer Agent]    → writes all files into projects/hello_django/
-    │
-    ▼
-[QA Agent]          → runs django-admin check, verifies files exist, tests view
-    │
-    ├── pass  → DONE  ✓
-    └── fail  → Engineer retries (up to 3×), then FAILED
+    ↓
+[PM Agent]       → breaks requirement into tasks
+    ↓
+[Analyser Agent] → writes technical spec
+    ↓
+[Human Gate]     ← YOU review + approve here
+    ↓
+[Engineer Agent] → writes all files into projects/hello_django/
+    ↓
+[QA Agent]       → runs django check, tests view, verifies file structure
+    ↓
+    ├── pass → DONE ✓
+    └── fail → Engineer retries (up to 3×), then FAILED
 ```
-
-Each agent produces a structured JSON output via `<submit>` — the LangGraph router reads it and decides the next node. **No LLM decides routing** — it is plain Python.
-
----
-
-### Step 0 — Prepare the output folder
-
-```bash
-# From the orchestrator root
-mkdir -p projects/hello_django
-```
-
-Set `ARTIFACT_DIR` in `.env` so the Engineer writes there:
-
-```dotenv
-ARTIFACT_DIR=./projects
-```
-
-> The Engineer agent writes files to `{ARTIFACT_DIR}/{project_name}/`. Paths are recorded in `artifact_paths` inside the checkpoint — never the file content itself.
-
----
 
 ### Step 1 — Start the pipeline
 
-Choose your preferred interface:
-
-**⭐ MCP (recommended) — inside Claude Code:**
+**MCP (recommended):**
 ```
 Run the AI orchestrator pipeline:
 Build a minimal Django "Hello World" web app.
@@ -683,295 +500,99 @@ Store all files under projects/hello_django/.
 The app must have one view at / that returns "Hello, World!"
 and must be runnable with: python manage.py runserver
 ```
-Claude calls `run_pipeline` and streams status back in the chat.
 
-**Agent CLI:**
-```bash
-claude --mcp-config .mcp.json
-# Then inside the session:
-/build-feature
-# Enter the requirement when prompted
-```
-
-**Python CLI (no server needed):**
+**Python CLI:**
 ```bash
 python -m orchestrator.runner \
-  "Build a minimal Django 'Hello World' web app. \
+  "Build a minimal Django Hello World app. \
    Store all files under projects/hello_django/. \
-   The app must have one view at / that returns 'Hello, World!' \
-   and must be runnable with: python manage.py runserver"
+   One view at / returning Hello, World! \
+   Runnable with python manage.py runserver"
 ```
 
-**What you see (all interfaces):**
-
+**What you see:**
 ```
-[PM]       ✓  3 tasks created  (1.4 s)
-[Analyser] ✓  spec ready       (8.2 s)
-⏸  Human Gate — spec is ready for your review
-   Job ID: f3a8b21c
+[PM]       ✓  3 tasks created  (1.4s)
+[Analyser] ✓  spec ready       (8.2s)
+⏸  Human Gate — spec ready for review — job_id: f3a8b21c
 ```
 
-**How to verify PM is done:**  
-Tasks list populated — check via MCP tool or API:
+### Step 2 — Review and approve the spec
 
-```bash
-# MCP: ask Claude "what are the tasks for job f3a8b21c?"
-# API:
-curl http://localhost:8000/status/f3a8b21c | python -m json.tool
-```
-
-Look for `"tasks": [ {...}, {...}, {...} ]` — three items with `"status": "pending"`.
-
-**How PM maps to the flow:**  
-PM runs first (`set_entry_point("pm")`). It calls `parse_submit()` which writes the task list into `ProjectContext.tasks`. LangGraph then routes automatically to `analyser` via a fixed edge.
-
----
-
-### Step 2 — Review the technical spec (Human Gate)
-
-The pipeline is **paused**. The Analyser has written a spec but Engineering has not started yet.
-
-Read the spec:
-
-```bash
-curl http://localhost:8000/status/f3a8b21c | python -m json.tool
-```
-
-Expected `spec` block (abbreviated):
+Expected spec (abbreviated):
 
 ```json
 {
-  "overview": "Minimal Django app with a single / endpoint returning 'Hello, World!'",
+  "overview": "Minimal Django app with a single / endpoint returning Hello, World!",
   "components": [
-    { "name": "hello_django/", "description": "Django project root" },
-    { "name": "hello/views.py", "description": "HelloView returning HttpResponse" },
-    { "name": "hello/urls.py",  "description": "URL conf wiring / to HelloView" }
+    {"name": "hello_django/", "description": "Django project root"},
+    {"name": "hello/views.py", "description": "View returning HttpResponse"},
+    {"name": "hello/urls.py", "description": "URL conf for /"}
   ],
   "api_contracts": [
-    { "method": "GET", "path": "/", "response": "200 Hello, World!" }
-  ],
-  "data_models": [],
-  "risks": [
-    { "id": "R1", "description": "manage.py runserver uses development server — not production-ready" }
+    {"method": "GET", "path": "/", "response": "200 Hello, World!"}
   ],
   "acceptance_criteria": [
-    "GET / returns HTTP 200 with body 'Hello, World!'",
-    "python manage.py check exits 0",
-    "project structure matches Django conventions"
+    "GET / returns HTTP 200 with body Hello, World!",
+    "python manage.py check exits 0"
   ]
 }
 ```
 
-**How to verify Analyser is done:**  
-`"status": "waiting_approval"` in the status response. `spec` field is non-null.
+Approve → Engineering starts automatically.
 
-**How Analyser maps to the flow:**  
-`analyser` node calls `parse_submit()` → writes `ProjectContext.spec`. LangGraph routes to `human_gate` via fixed edge. `interrupt_before=["human_gate"]` pauses the graph **before** entering that node — the checkpoint is saved at this exact moment.
-
-**If the spec looks wrong** — reject and re-run with a more detailed prompt:
+### Step 3 — Engineer writes the files
 
 ```
-# MCP: tell Claude "reject the spec for job f3a8b21c"
-# API:
-curl -X POST http://localhost:8000/approve-spec \
-  -H "Content-Type: application/json" \
-  -d '{"job_id": "f3a8b21c", "decision": "reject"}'
+[Engineer] ✓ done (22.4s)
+  wrote  projects/hello_django/manage.py
+  wrote  projects/hello_django/hello_django/settings.py
+  wrote  projects/hello_django/hello_django/urls.py
+  wrote  projects/hello_django/hello/views.py
+  wrote  projects/hello_django/hello/urls.py
 ```
 
----
+### Step 4 — QA validates
 
-### Step 3 — Approve and start Engineering
-
-**MCP (recommended):** say `"approve"` in the Claude Code chat.
-
-**Agent CLI:** say `"approve"` inside the active session, or `/review-spec` → approve.
-
-**Frontend UI:** click the green **Approve — Start Engineering ▶** button.
-
-**REST API:**
-```bash
-curl -X POST http://localhost:8000/approve-spec \
-  -H "Content-Type: application/json" \
-  -d '{"job_id": "f3a8b21c", "decision": "approve"}'
-```
-
-**What you see:**
-
-```
-[human_gate] approved — resuming
-[Engineer] running...
-[Engineer] ✓ done  (22.4 s)
-    wrote  projects/hello_django/manage.py
-    wrote  projects/hello_django/hello_django/settings.py
-    wrote  projects/hello_django/hello_django/urls.py
-    wrote  projects/hello_django/hello/views.py
-    wrote  projects/hello_django/hello/urls.py
-    wrote  projects/hello_django/hello/apps.py
-
-[QA] running...
-```
-
-**How to verify Engineer is done:**  
-Check that files exist:
-
-```bash
-ls projects/hello_django/
-# Expected: manage.py  hello_django/  hello/
-```
-
-Check via API — `artifact_paths` is populated:
-
-```bash
-curl http://localhost:8000/status/f3a8b21c | python -m json.tool
-# Look for: "artifact_paths": { "manage.py": "projects/hello_django/manage.py", ... }
-```
-
-**How Engineer maps to the flow:**  
-`human_gate` node calls LangGraph's `interrupt()` and then returns when `Command(resume="approve")` arrives. Fixed edge routes to `engineer`. Engineer writes files, calls `parse_submit()` → writes `artifact_paths`. Fixed edge routes to `qa`.
-
----
-
-### Step 4 — QA validates the output
-
-QA runs automatically after Engineer. It does not need your input.
-
-**What QA checks** (per acceptance criteria from the spec):
-
-| Check | Command QA runs | Pass condition |
+| Check | Command | Pass condition |
 |---|---|---|
-| Django system check | `python manage.py check` | Exit code 0 |
+| Django system check | `python manage.py check` | Exit 0 |
 | View returns 200 | Django test client `GET /` | Status 200, body `Hello, World!` |
 | File structure | `os.path.exists(...)` | `manage.py`, `views.py`, `urls.py` present |
 
-**Possible outcomes:**
-
-```
-[QA] ✓ pass — all checks passed
-    status: done
-```
-
-or (if Engineer made a mistake):
-
-```
-[QA] ✗ fail-minor
-    D1  missing 404 handler     views.py:12
-    → routing back to Engineer (iteration 1/3)
-```
-
-**How to verify QA is done:**  
-`test_report` field is populated:
+### Step 5 — Collect output
 
 ```bash
-curl http://localhost:8000/status/f3a8b21c | python -m json.tool
-```
-
-```json
-"test_report": {
-  "status": "pass",
-  "summary": "All 3 checks passed",
-  "passed": ["django_check", "hello_view_200", "file_structure"],
-  "failed": [],
-  "defects": []
-}
-```
-
-**How QA maps to the flow:**  
-`qa` node calls `parse_submit()` → writes `test_report`, increments `iteration` on fail. `conditional_edges` calls `route_qa()`:
-
-```python
-# route_qa logic (deterministic Python, no LLM):
-if report["status"] == "pass":          → "done"
-if report["status"] == "fail-minor":
-    if iteration >= 3:                  → "failed"
-    else:                               → "engineer"   # retry
-if report["status"] == "fail-major":
-    if qa_analyser_iteration >= 2:      → "failed"
-    else:                               → "analyser"   # re-spec
-```
-
----
-
-### Step 5 — Collect your output
-
-When status is `"done"`:
-
-```bash
-# Run the Django dev server to verify manually
 cd projects/hello_django
 pip install django
 python manage.py runserver
-# → open http://127.0.0.1:8000/ in browser
-# → should show: Hello, World!
+# → http://127.0.0.1:8000/ → Hello, World!
 ```
 
-Check the final pipeline status:
-
-```bash
-curl http://localhost:8000/status/f3a8b21c | python -m json.tool
-```
+Final API status:
 
 ```json
 {
-  "job_id": "f3a8b21c",
   "status": "done",
-  "current_node": null,
-  "tasks": [ ... ],
-  "spec": { ... },
   "artifact_paths": {
-    "manage.py":                      "projects/hello_django/manage.py",
-    "hello_django/settings.py":       "projects/hello_django/hello_django/settings.py",
-    "hello_django/urls.py":           "projects/hello_django/hello_django/urls.py",
-    "hello/views.py":                 "projects/hello_django/hello/views.py",
-    "hello/urls.py":                  "projects/hello_django/hello/urls.py",
-    "hello/apps.py":                  "projects/hello_django/hello/apps.py"
+    "manage.py": "projects/hello_django/manage.py",
+    "hello/views.py": "projects/hello_django/hello/views.py"
   },
   "test_report": {
     "status": "pass",
-    "summary": "All checks passed",
     "passed": ["django_check", "hello_view_200", "file_structure"],
-    "failed": [],
     "defects": []
-  },
-  "iteration": 0,
-  "qa_analyser_iteration": 0
+  }
 }
 ```
 
----
+### Step → Agent mapping
 
-### Full flow summary — one table
-
-| Step | Agent / Gate | What happens | How to verify | `ProjectContext` field updated |
-|---|---|---|---|---|
-| 1 | **PM** | Breaks requirement into 3 tasks | `tasks` list has 3 items with `status=pending` | `tasks` |
-| 2 | **Analyser** | Writes technical spec (components, API contracts, risks, acceptance criteria) | `spec` field is non-null | `spec` |
-| 3 | **Human Gate** | Pipeline pauses — YOU review the spec | API status = `waiting_approval` | _(no change)_ |
-| 4 | **[You approve]** | Pipeline resumes from checkpoint | API status returns to `running` | _(no change)_ |
-| 5 | **Engineer** | Writes all Django files to `projects/hello_django/` | Files exist on disk, `artifact_paths` populated | `artifact_paths` |
-| 6 | **QA** | Runs `manage.py check`, tests view, checks file structure | `test_report.status = "pass"` | `test_report` |
-| 7 | **Done** | `handle_done` sets final status | API status = `done` | `status` |
-
----
-
-### What to do if the pipeline fails
-
-```bash
-# See which step failed and why
-curl http://localhost:8000/status/f3a8b21c | python -m json.tool
-
-# Key fields to read:
-#   "status"       → "failed"
-#   "iteration"    → how many Engineer retries happened
-#   "test_report"  → which checks failed and why
-#   "history"      → full agent event log with timestamps
-```
-
-Common fix: add more detail to the prompt and start a new run:
-
-```bash
-python -m orchestrator.runner \
-  "Build a minimal Django 'Hello World' app under projects/hello_django/. \
-   Use Django 4.2. Create a hello app with views.py, urls.py, apps.py. \
-   Wire the root URL to hello.views.index which returns HttpResponse('Hello, World!'). \
-   Include requirements.txt listing django==4.2."
-```
+| Step | Agent | `ProjectContext` field updated |
+|---|---|---|
+| 1 | **PM** | `tasks` |
+| 2 | **Analyser** | `spec` |
+| 3 | **Human Gate** | _(no change — checkpoint saved)_ |
+| 4 | **Engineer** | `artifact_paths` |
+| 5 | **QA** | `test_report` |
+| 6 | **Done** | `status = "done"` |

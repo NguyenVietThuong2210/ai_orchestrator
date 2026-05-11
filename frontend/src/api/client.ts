@@ -1,4 +1,4 @@
-import type { JobStatusResponse, RunPipelineResponse } from "../types";
+import type { JobStatusResponse, JobListResponse, RunPipelineResponse } from "../types";
 
 const BASE = "";  // relative — works for both Vite proxy and FastAPI static serve
 
@@ -43,6 +43,10 @@ export const api = {
 
   cancelJob(jobId: string): Promise<void> {
     return post(`/cancel/${jobId}`, {});
+  },
+
+  listJobs(): Promise<JobListResponse> {
+    return get("/jobs");
   },
 
   streamUrl(jobId: string): string {

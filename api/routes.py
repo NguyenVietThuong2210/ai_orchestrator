@@ -4,17 +4,17 @@ FastAPI routes:
   POST /approve-spec      — resume after Human Gate
   GET  /status/{job_id}   — poll job state
   GET  /stream/{job_id}   — SSE live event stream
-  POST /cancel/{job_id}   — cancel job (best-effort)
+  POST /cancel/{job_id}   — cancel job (cancels asyncio task + kills subprocess)
 """
 from __future__ import annotations
 
 import asyncio
 import json
 import logging
-from functools import lru_cache
+import os
 from typing import AsyncGenerator
 
-from fastapi import APIRouter, BackgroundTasks, HTTPException
+from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
 from uuid import uuid4
 
@@ -22,39 +22,37 @@ from api.schemas import (
     RunPipelineRequest, RunPipelineResponse,
     ApproveSpecRequest, ApproveSpecResponse,
     JobStatusResponse, CancelJobResponse,
+    JobSummary, JobListResponse,
 )
 from orchestrator.runner import run_pipeline, resume_pipeline
-from orchestrator.graph import compile_app
+from orchestrator.graph import get_app
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
 
-# In-memory job registry — replace with DB in production
+# Job registry: job_id → {status, task, error}
+# task is the asyncio.Task — holds a reference so we can cancel it.
 _jobs: dict[str, dict] = {}
 
 
-@lru_cache(maxsize=1)
-def _get_app():
-    """Compile LangGraph app once and cache — avoids creating a new SQLite
-    connection on every request."""
-    return compile_app()
-
-
 @router.post("/run-pipeline", response_model=RunPipelineResponse)
-async def start_pipeline(req: RunPipelineRequest, bg: BackgroundTasks):
+async def start_pipeline(req: RunPipelineRequest):
     job_id = req.job_id or str(uuid4())
-    _jobs[job_id] = {"status": "started", "job_id": job_id}
 
-    async def _run():
+    async def _run() -> None:
         try:
             final = await run_pipeline(req.requirement, job_id=job_id)
-            _jobs[job_id].update(final)
-        except Exception as exc:
-            logger.exception("Pipeline error job_id=%s", job_id)
+            _jobs[job_id]["status"] = final.get("status", "done")
+        except asyncio.CancelledError:
+            logger.info("Pipeline cancelled — job_id=%s", job_id)
             _jobs[job_id]["status"] = "failed"
-            _jobs[job_id]["error"]  = str(exc)
+        except Exception as exc:
+            logger.exception("Pipeline error — job_id=%s", job_id)
+            _jobs[job_id].update({"status": "failed", "error": str(exc)})
 
-    bg.add_task(_run)
+    task = asyncio.create_task(_run(), name=f"pipeline-{job_id}")
+    _jobs[job_id] = {"status": "running", "task": task, "error": None}
+
     return RunPipelineResponse(
         job_id=job_id,
         status="started",
@@ -63,20 +61,32 @@ async def start_pipeline(req: RunPipelineRequest, bg: BackgroundTasks):
 
 
 @router.post("/approve-spec", response_model=ApproveSpecResponse)
-async def approve_spec(req: ApproveSpecRequest, bg: BackgroundTasks):
+async def approve_spec(req: ApproveSpecRequest):
     if req.job_id not in _jobs:
         raise HTTPException(404, f"job_id {req.job_id!r} not found")
 
-    async def _resume():
+    # Idempotency: don't spawn a second resume task if one is already in flight
+    existing = _jobs[req.job_id].get("task")
+    if existing and not existing.done():
+        return ApproveSpecResponse(
+            job_id=req.job_id,
+            status="resuming",
+            message="Pipeline is already resuming — duplicate request ignored",
+        )
+
+    async def _resume() -> None:
         try:
             final = await resume_pipeline(req.job_id, decision=req.decision)
-            _jobs[req.job_id].update(final)
-        except Exception as exc:
-            logger.exception("Resume error job_id=%s", req.job_id)
+            _jobs[req.job_id]["status"] = final.get("status", "done")
+        except asyncio.CancelledError:
             _jobs[req.job_id]["status"] = "failed"
-            _jobs[req.job_id]["error"]  = str(exc)
+        except Exception as exc:
+            logger.exception("Resume error — job_id=%s", req.job_id)
+            _jobs[req.job_id].update({"status": "failed", "error": str(exc)})
 
-    bg.add_task(_resume)
+    task = asyncio.create_task(_resume(), name=f"resume-{req.job_id}")
+    _jobs[req.job_id]["task"] = task
+
     return ApproveSpecResponse(
         job_id=req.job_id,
         status="resuming",
@@ -86,19 +96,22 @@ async def approve_spec(req: ApproveSpecRequest, bg: BackgroundTasks):
 
 @router.get("/status/{job_id}", response_model=JobStatusResponse)
 async def get_status(job_id: str):
-    if job_id not in _jobs:
-        raise HTTPException(404, f"job_id {job_id!r} not found")
-
-    app      = _get_app()
+    app      = await get_app()
     config   = {"configurable": {"thread_id": job_id}}
-    snapshot = app.get_state(config)
+    snapshot = await app.aget_state(config)
     state    = snapshot.values or {}
 
-    # Detect Human Gate pause: next node is human_gate
+    # 404 only when neither _jobs nor LangGraph know about this id
+    if not state and job_id not in _jobs:
+        raise HTTPException(404, f"job_id {job_id!r} not found")
+
+    # Lazily register jobs that existed before this server session (e.g. MCP-started)
+    if job_id not in _jobs:
+        _jobs[job_id] = {"status": "unknown", "task": None, "error": None}
+
     next_nodes   = snapshot.next or ()
     current_node = next_nodes[0] if next_nodes else "end"
 
-    # Derive human-readable status — also check _jobs for explicit failure/cancel
     job_meta = _jobs.get(job_id, {})
     if state.get("status") in ("done", "failed"):
         derived_status = state["status"]
@@ -107,14 +120,12 @@ async def get_status(job_id: str):
     elif current_node == "human_gate":
         derived_status = "waiting_approval"
     elif current_node == "end" and not state:
-        # No checkpoint yet — pipeline is still starting
         derived_status = "running"
     else:
         derived_status = "running"
 
-    # current_node "end" means nothing is next — map to readable value
     readable_node = current_node if current_node != "end" else (
-        state.get("status", "running")  # "done", "failed", or "running"
+        state.get("status", "running")
     )
 
     return JobStatusResponse(
@@ -131,42 +142,30 @@ async def get_status(job_id: str):
         cost_estimate_usd=_sum_cost(state.get("history", [])),
         project_dir=state.get("project_dir"),
         spec_dir=state.get("spec_dir"),
+        error=job_meta.get("error"),
     )
 
 
 def _sum_cost(history: list[dict]) -> float | None:
-    """Sum token costs from history if mode=api (Mode B has no API cost)."""
     if not history:
         return None
-    if any("mode=api" in e.get("note", "") for e in history):
-        return None   # TODO: compute from token usage when Mode A is implemented
-    return 0.0        # Mode B: $0 extra
+    return 0.0  # Mode B: $0 API cost
 
 
 @router.get("/stream/{job_id}")
 async def stream_events(job_id: str):
-    """
-    Server-Sent Events — streams LangGraph node_start / node_end events
-    for a running pipeline job.
-    """
-    if job_id not in _jobs:
-        raise HTTPException(404, f"job_id {job_id!r} not found")
+    """SSE — streams LangGraph node events for a running pipeline job."""
+    # No _jobs guard — LangGraph state is the source of truth for existing jobs
 
     async def _generate() -> AsyncGenerator[str, None]:
-        app    = _get_app()
+        app    = await get_app()
         config = {"configurable": {"thread_id": job_id}}
-
-        # Stream events from the existing checkpoint thread (read-only — no re-invocation)
         try:
-            async for event in app.astream_events(
-                None,           # None = don't reinvoke; stream from existing thread state
-                config,
-                version="v2",
-            ):
+            async for event in app.astream_events(None, config, version="v2"):
                 payload = json.dumps({
                     "event": event["event"],
                     "name":  event.get("name", ""),
-                    "data":  str(event.get("data", ""))[:500],  # truncate for SSE safety
+                    "data":  str(event.get("data", ""))[:500],
                 })
                 yield f"data: {payload}\n\n"
                 await asyncio.sleep(0)
@@ -178,11 +177,86 @@ async def stream_events(job_id: str):
     return StreamingResponse(_generate(), media_type="text/event-stream")
 
 
+@router.get("/jobs", response_model=JobListResponse)
+async def list_jobs():
+    """
+    Return recent jobs (most recent first) — used by UI to auto-detect MCP-started pipelines.
+    Sources: in-memory _jobs (current session) + Postgres checkpoints (survives restarts).
+    """
+    # Query Postgres checkpoints table for recent thread IDs
+    db_thread_ids: list[str] = []
+    from orchestrator.graph import _checkpointer
+    if _checkpointer is not None:
+        try:
+            async with _checkpointer.conn.cursor() as cur:
+                await cur.execute(
+                    "SELECT thread_id FROM ("
+                    "  SELECT DISTINCT ON (thread_id) thread_id, checkpoint_id"
+                    "  FROM checkpoints"
+                    "  ORDER BY thread_id, checkpoint_id DESC"
+                    ") t ORDER BY checkpoint_id DESC LIMIT 20"
+                )
+                rows = await cur.fetchall()
+                db_thread_ids = [r["thread_id"] for r in rows]
+        except Exception:
+            logger.exception("Failed to query checkpoints table")
+
+    # Merge: in-memory (newest first) then DB (removes duplicates, preserves order)
+    seen: set[str] = set()
+    ordered: list[str] = []
+    for jid in list(reversed(list(_jobs.keys()))) + db_thread_ids:
+        if jid not in seen:
+            seen.add(jid)
+            ordered.append(jid)
+
+    # Derive real status from LangGraph for each job
+    app = await get_app()
+    result: list[JobSummary] = []
+    for jid in ordered[:20]:
+        try:
+            config   = {"configurable": {"thread_id": jid}}
+            snapshot = await app.aget_state(config)
+            state    = snapshot.values or {}
+            next_nodes = snapshot.next or ()
+            current_node = next_nodes[0] if next_nodes else "end"
+
+            job_meta = _jobs.get(jid, {})
+            if state.get("status") in ("done", "failed"):
+                derived = state["status"]
+            elif job_meta.get("status") == "failed":
+                derived = "failed"
+            elif current_node == "human_gate":
+                derived = "waiting_approval"
+            elif not state:
+                derived = job_meta.get("status", "unknown")
+            else:
+                derived = "running"
+
+            # Lazily register so /status/{job_id} doesn't 404
+            if jid not in _jobs:
+                _jobs[jid] = {"status": derived, "task": None, "error": None}
+
+            result.append(JobSummary(job_id=jid, status=derived))
+        except Exception:
+            result.append(JobSummary(job_id=jid, status=_jobs.get(jid, {}).get("status", "unknown")))
+
+    return JobListResponse(jobs=result)
+
+
 @router.post("/cancel/{job_id}", response_model=CancelJobResponse)
 async def cancel_job(job_id: str):
     if job_id not in _jobs:
         raise HTTPException(404, f"job_id {job_id!r} not found")
+
+    job  = _jobs[job_id]
+    task: asyncio.Task | None = job.get("task")
+    if task and not task.done():
+        task.cancel()
+        # Give the task a moment to handle CancelledError and kill its subprocess
+        try:
+            await asyncio.wait_for(asyncio.shield(task), timeout=5.0)
+        except (asyncio.CancelledError, asyncio.TimeoutError):
+            pass
+
     _jobs[job_id]["status"] = "failed"
-    # Note: in-flight claude subprocess continues until it finishes naturally.
-    # True cancellation requires process tracking — future work for production.
-    return CancelJobResponse(job_id=job_id, message="Job marked cancelled (in-flight subprocess may still complete)")
+    return CancelJobResponse(job_id=job_id, message="Job cancelled")

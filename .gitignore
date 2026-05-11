@@ -24,10 +24,6 @@ data/
 *.sqlite
 *.sqlite3
 
-# Artifacts (Engineer output — large generated files)
-artifacts/
-projects/
-
 # Frontend build output
 frontend/dist/
 frontend/node_modules/

@@ -1,0 +1,37 @@
+# Git
+.git
+.gitignore
+
+# Python
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.egg-info
+.venv
+.pytest_cache
+
+# Frontend source (only dist/ is needed — built in stage 1)
+frontend/node_modules
+frontend/dist
+
+# Data & generated output
+data/
+artifacts/
+projects/
+
+# Docs & research
+*.md
+PLAN.md
+SOLUTION.md
+GUIDELINE.md
+research/
+
+# Dev config
+.env
+.env.*
+.claude/
+.mcp.json
+conftest.py
+tests/

@@ -10,12 +10,11 @@ import logging
 import os
 import pathlib
 import re
-import sqlite3
 from datetime import datetime, timezone
 from textwrap import dedent
 
 from langgraph.graph import StateGraph, END
-from langgraph.checkpoint.sqlite import SqliteSaver
+from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 from langgraph.types import interrupt
 
 from orchestrator.context import ProjectContext
@@ -25,8 +24,18 @@ logger = logging.getLogger(__name__)
 
 MAX_QA_ITERATIONS          = int(os.getenv("MAX_QA_ITERATIONS", "3"))
 MAX_QA_ANALYSER_ITERATIONS = int(os.getenv("MAX_QA_ANALYSER_ITERATIONS", "2"))
-CHECKPOINT_DB              = os.getenv("CHECKPOINT_DB", "./data/checkpoints.sqlite")
 PROJECTS_ROOT              = os.getenv("PROJECTS_ROOT", "./projects")
+
+
+def _require_database_url() -> str:
+    url = os.getenv("DATABASE_URL")
+    if not url:
+        raise RuntimeError(
+            "DATABASE_URL is not set. "
+            "Set it to a PostgreSQL connection string, e.g.: "
+            "postgresql://user:pass@localhost:5432/orchestrator"
+        )
+    return url
 
 
 # ── Spec-file helpers ─────────────────────────────────────────────────────────
@@ -34,11 +43,10 @@ PROJECTS_ROOT              = os.getenv("PROJECTS_ROOT", "./projects")
 def _derive_project_dir(state: ProjectContext) -> str:
     """
     Extract the project directory from the requirement text.
-    Looks for patterns like:  projects/hello_django/  or  project: hello_django
+    Looks for patterns like:  projects/hello_django/  or  project/hello_django
     Falls back to  projects/<job_id[:8]>/
     """
     request = state.get("request", "")
-    # Match "projects/foo" or "project/foo" (with optional trailing slash)
     m = re.search(r"projects?/([A-Za-z0-9_\-]+)", request, re.IGNORECASE)
     if m:
         return f"{PROJECTS_ROOT}/{m.group(1)}"
@@ -93,10 +101,10 @@ def _write_requirements(state: ProjectContext, sd: pathlib.Path) -> None:
     """)
     _w(sd / "00_requirements.md", md)
     _update_manifest(sd, {
-        "job_id":    state.get("job_id"),
-        "started":   ts,
-        "request":   state.get("request"),
-        "steps":     {},
+        "job_id":  state.get("job_id"),
+        "started": ts,
+        "request": state.get("request"),
+        "steps":   {},
     })
 
 
@@ -202,8 +210,8 @@ def _write_qa_report(state: ProjectContext, sd: pathlib.Path) -> None:
         f"- [{d.get('severity','?').upper()}] `{d.get('file','')}:{d.get('line','')}` — {d.get('description','')}"
         for d in report.get("defects", [])
     )
-    passed  = "\n".join(f"- ✓ {t}" for t in report.get("passed", []))
-    failed  = "\n".join(f"- ✗ {t}" for t in report.get("failed", []))
+    passed = "\n".join(f"- ✓ {t}" for t in report.get("passed", []))
+    failed = "\n".join(f"- ✗ {t}" for t in report.get("failed", []))
     md = dedent(f"""\
         # QA Report{f' (retry {iteration})' if iteration else ''}
 
@@ -259,9 +267,9 @@ def _make_agent_node(agent_name: str):
         updated = await backend.run(agent_name, state)
         logger.info("[graph] ← %s done", agent_name)
 
-        # Persist spec files to project folder
         project_dir = updated.get("project_dir") or _derive_project_dir(updated)
-        updated = {**updated, "project_dir": project_dir, "spec_dir": str(pathlib.Path(project_dir) / "spec")}
+        updated = {**updated, "project_dir": project_dir,
+                   "spec_dir": str(pathlib.Path(project_dir) / "spec")}
         write_step_spec(agent_name, updated)
 
         return updated  # type: ignore[return-value]
@@ -273,7 +281,6 @@ def human_gate(state: ProjectContext) -> ProjectContext:
     """
     Pause the graph and wait for explicit human approval.
     Resume with: app.invoke(Command(resume="approve"), config)
-    Reject  with: app.invoke(Command(resume="reject"), config)
     """
     logger.info("[graph] ⏸  Human Gate — waiting for spec approval")
     decision = interrupt({
@@ -361,19 +368,45 @@ def build_graph() -> StateGraph:
     return g
 
 
-def compile_app(checkpointer=None):
+# ── Async singleton ───────────────────────────────────────────────────────────
+
+_app = None
+_checkpointer: AsyncPostgresSaver | None = None
+_checkpointer_cm = None
+
+
+async def get_app():
     """
-    Compile the LangGraph app with checkpoint and human gate interrupt.
+    Return the compiled LangGraph app (async singleton).
+    Requires DATABASE_URL to be set — raises RuntimeError otherwise.
     """
-    pathlib.Path(CHECKPOINT_DB).parent.mkdir(parents=True, exist_ok=True)
+    global _app, _checkpointer, _checkpointer_cm
+    if _app is not None:
+        return _app
+
     pathlib.Path(PROJECTS_ROOT).mkdir(parents=True, exist_ok=True)
 
-    if checkpointer is None:
-        conn = sqlite3.connect(CHECKPOINT_DB, check_same_thread=False)
-        checkpointer = SqliteSaver(conn)
+    db_url = _require_database_url()
+    _checkpointer_cm = AsyncPostgresSaver.from_conn_string(db_url)
+    _checkpointer = await _checkpointer_cm.__aenter__()
+    await _checkpointer.setup()
+    logger.info("Checkpointer: AsyncPostgresSaver @ %s", db_url.split("@")[-1])
 
-    graph = build_graph()
-    return graph.compile(
-        checkpointer=checkpointer,
+    _app = build_graph().compile(
+        checkpointer=_checkpointer,
         interrupt_before=["human_gate"],
     )
+    return _app
+
+
+async def close_app() -> None:
+    """Graceful shutdown — close PostgreSQL connection pool."""
+    global _app, _checkpointer, _checkpointer_cm
+    if _checkpointer_cm is not None:
+        try:
+            await _checkpointer_cm.__aexit__(None, None, None)
+        except Exception:
+            logger.exception("Error closing checkpointer")
+    _app = None
+    _checkpointer = None
+    _checkpointer_cm = None

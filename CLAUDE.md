@@ -2,6 +2,10 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Core Rules
+
+- **Always update [SOLUTION.md](SOLUTION.md) after any code change** — document what changed, why, and which files were affected. SOLUTION.md is the living design record of this project.
+
 ## Project Overview
 
 An **AI Orchestrator** that coordinates four specialized AI agents to build software projects end-to-end:
@@ -23,7 +27,7 @@ LangGraph Graph (deterministic routing — NOT an LLM)
     ├── dispatches agents in sequence via conditional_edges
     ├── pauses at human_gate (interrupt_before) — waits for spec approval
     ├── routes QA failures: minor → Engineer (max 3x), major → Analyser (max 2x)
-    ├── checkpoints ProjectContext automatically via SqliteSaver/PostgresSaver
+    ├── checkpoints ProjectContext automatically via AsyncPostgresSaver
     └── always terminates: DONE (pass) or FAILED (max iterations hit)
 
 Agent pipeline:
@@ -44,7 +48,7 @@ Routing is Python functions inside LangGraph `conditional_edges` — no LLM deci
 ```python
 from uuid import uuid4
 from langgraph.graph import StateGraph, END
-from langgraph.checkpoint.sqlite import SqliteSaver
+from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 from langgraph.types import interrupt, Command
 
 def human_gate(state: ProjectContext) -> ProjectContext:
@@ -91,8 +95,9 @@ graph.add_edge("done",   END)
 graph.add_edge("failed", END)
 
 # interrupt_before pauses AT human_gate; resume() continues from checkpoint
+# AsyncPostgresSaver is created in get_app() — see orchestrator/graph.py
 app = graph.compile(
-    checkpointer=SqliteSaver.from_conn_string(CHECKPOINT_DB),
+    checkpointer=checkpointer,   # AsyncPostgresSaver instance
     interrupt_before=["human_gate"],
 )
 
@@ -178,8 +183,7 @@ Exposes three primitives:
 | API | FastAPI + SSE | Async streaming of LangGraph events |
 | MCP Server | FastMCP (Python) | ~60 lines, auto-schema from Pydantic |
 | Observability | Langfuse (open source) | Trace all agent calls, token usage |
-| Checkpoint (dev) | `SqliteSaver` | Zero setup, built into LangGraph |
-| Checkpoint (prod) | `PostgresSaver` (pkg: `langgraph-checkpoint-postgres`) | Concurrent jobs, durability |
+| Checkpoint | `AsyncPostgresSaver` (`langgraph-checkpoint-postgres`) | Concurrent jobs, durability, async-native |
 | Config | python-dotenv | Standard |
 | **Frontend** | **React 18 + Vite + TypeScript + Tailwind CSS** | Pipeline control UI — form, real-time timeline, spec review, QA report |
 
@@ -260,27 +264,34 @@ uvicorn api.main:app --reload
 ## Environment Variables
 
 ```
-# Backend: claude_code (Mode B, default) | api (Mode A)
-AI_BACKEND=claude_code
+# ── Required ─────────────────────────────────────────────────────────────────
+DATABASE_URL=postgresql://user:pass@localhost:5432/orchestrator
 
-# Mode A — requires ANTHROPIC_API_KEY
+# ── Agent backend ─────────────────────────────────────────────────────────────
+AI_BACKEND=claude_code          # "claude_code" (Mode B) | "api" (Mode A)
+
+# Mode A — requires API key
 ANTHROPIC_API_KEY=sk-ant-...
 PM_MODEL=claude-haiku-4-5-20251001
 ANALYSER_MODEL=claude-opus-4-7
 ENGINEER_MODEL=claude-sonnet-4-6
 QA_MODEL=claude-sonnet-4-6
 
-# Mode B — Pro subscription, override model per agent
+# Mode B — Claude Pro subscription
 PM_MODEL_B=claude-haiku-4-5-20251001
 ANALYSER_MODEL_B=claude-sonnet-4-6
 ENGINEER_MODEL_B=claude-sonnet-4-6
 QA_MODEL_B=claude-sonnet-4-6
 
+# ── Pipeline limits ───────────────────────────────────────────────────────────
 MAX_QA_ITERATIONS=3
 MAX_QA_ANALYSER_ITERATIONS=2
-HUMAN_GATE_TIMEOUT_HOURS=24
-CHECKPOINT_DB=./data/checkpoints.sqlite
+
+# ── Paths ─────────────────────────────────────────────────────────────────────
 ARTIFACT_DIR=./artifacts
+PROJECTS_ROOT=./projects
+
+# ── Observability (optional) ──────────────────────────────────────────────────
 LOG_LEVEL=INFO
 LANGFUSE_PUBLIC_KEY=...
 LANGFUSE_SECRET_KEY=...
@@ -342,41 +353,61 @@ idle → starting → running ⇄ waiting_approval → running → done
 ## Known Issues & Constraints
 
 ### BE: `_jobs` registry is in-memory
-`_jobs: dict[str, dict]` in `routes.py` is process-local. On server restart, all job IDs are lost → `/status` returns 404. **Production fix**: recover `_jobs` from SQLite checkpoint on startup, or persist to DB.
+`_jobs: dict[str, dict]` in `routes.py` is process-local. On server restart, all job IDs are lost → `/status` returns 404.
+- LangGraph state (spec, tasks, artifacts) is safely persisted in PostgreSQL — only the active asyncio Task reference is lost.
+- **Production fix**: persist job registry to a PostgreSQL table on startup; recover on restart by scanning LangGraph checkpoint threads.
 
-### BE: `SqliteSaver` — use `sqlite3.connect` directly (LangGraph 1.x)
-`SqliteSaver.from_conn_string()` returns a **context-manager iterator**, NOT a `SqliteSaver`. Always construct via:
+### BE: `asyncio.Task` references not persisted
+Each `run_pipeline` call creates an `asyncio.create_task()` and stores it in `_jobs[job_id]["task"]` for cancellation. If the server restarts mid-pipeline, the task is gone but the LangGraph checkpoint remains — the pipeline can be resumed but cannot be cancelled via the API until restarted.
+
+### BE: Mode B (ClaudeCodeBackend) — Windows `.cmd` resolution
+On Windows, `asyncio.create_subprocess_exec` cannot resolve `.cmd` files via `PATHEXT`. The backend uses `claude.cmd` explicitly on Windows:
 ```python
-import sqlite3
-from langgraph.checkpoint.sqlite import SqliteSaver
-conn = sqlite3.connect(CHECKPOINT_DB, check_same_thread=False)
-checkpointer = SqliteSaver(conn)
+def _claude_cmd() -> str:
+    return "claude.cmd" if os.name == "nt" else "claude"
 ```
-Never call `SqliteSaver.from_conn_string(path)` without `with` — it silently produces a generator.
 
 ### BE: Mode B (ClaudeCodeBackend) — nested session guard
-`claude -p` subprocesses fail with "Cannot be launched inside another Claude Code session" when the `CLAUDECODE` env var is set. Fix: strip `CLAUDECODE` from subprocess env:
+`claude -p` subprocesses fail with "Cannot be launched inside another Claude Code session" when the `CLAUDECODE` env var is set. Already fixed:
 ```python
 env = {k: v for k, v in os.environ.items() if k != "CLAUDECODE"}
 proc = await asyncio.create_subprocess_exec(*cmd, env=env, ...)
 ```
-This is already applied in `orchestrator/backends/claude_code_backend.py`.
 
 ### BE: `current_node` semantics
-`snapshot.next` contains the **next** node to execute, not the currently running one. When no next node exists (`next == ()`), the route handler sets `current_node = "end"`. The frontend `NODE_TO_STEP` map ignores "end"; `getStepState` falls back gracefully.
+`snapshot.next` contains the **next** node to execute, not the currently running one. When no next node exists (`next == ()`), the route handler maps `current_node = state.get("status", "running")`. The frontend `NODE_TO_STEP` map handles this gracefully.
 
-### FE: `JobStatusResponse.tasks` must be included
-`tasks` (PM output) must be in the API response for `TaskBoard` to render. It is declared in `schemas.py → JobStatusResponse` and populated in `routes.py → get_status` via `state.get("tasks", [])`.
+### BE: `DATABASE_URL` is required
+The server raises `RuntimeError` at startup if `DATABASE_URL` is not set. No SQLite fallback.
+LangGraph creates checkpoint tables (`checkpoints`, `checkpoint_writes`, `checkpoint_migrations`) automatically via `checkpointer.setup()` in the FastAPI lifespan.
+
+### FE: Spec/QA array fields may be null
+Analyser and QA agents may return partial JSON. All array accesses in `SpecReview.tsx` and `TestReport.tsx` are guarded with `?? []` to prevent crashes.
+
+### FE: SSE reconnection
+`useSSE.ts` retries with exponential backoff (up to 5 retries: 1s → 2s → 4s → 8s → 16s) on `onerror`. Connection drops during long agent runs are recovered automatically.
+
+### FE: Polling lifecycle tied to `status === "running"`
+`usePipeline.ts` starts polling via a `useEffect` that depends on `[state.jobId, state.status]`. Polling auto-starts when status becomes `"running"` (e.g. after approve). Terminal states (`done | failed | waiting_approval`) trigger `stopPolling()` inside the poll callback — the effect cleanup handles unmount.
+
+### BE: CORS locked to explicit origins
+`CORS_ORIGINS` env var (comma-separated) controls allowed origins. Defaults to `http://localhost:5173,http://localhost:8000` in dev, `http://localhost:8000` in Docker. Set to your production domain before deploying.
+
+### BE: `approve-spec` idempotency guard
+`POST /approve-spec` checks if a resume task is already in flight (`task and not task.done()`). Duplicate clicks return 200 with `"already resuming"` instead of spawning a second task.
+
+### BE: Subprocess secret filtering
+`claude_code_backend.py` strips `CLAUDECODE`, `DATABASE_URL`, `ANTHROPIC_API_KEY`, `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY` from the subprocess env before spawning `claude.cmd`. Prevents credential leakage to the CLI process.
 
 ## Enterprise Checklist
 
 - [ ] Observability: Langfuse traces for every agent call (token usage, latency, cost)
 - [ ] Cost guard: token budget per agent per run; alert when exceeded
-- [ ] Human Gate: `interrupt_before=["human_gate"]` + auto-expire after `HUMAN_GATE_TIMEOUT_HOURS`
+- [ ] Human Gate: `interrupt_before=["human_gate"]` + auto-expire after configurable timeout
 - [ ] Artifact storage: Engineer writes to `ARTIFACT_DIR` — never embed content in checkpoint
 - [ ] MCP security: sanitize all inputs before forwarding to backend (prompt injection risk)
 - [ ] Idempotency: LangGraph checkpoints after each node; `Command(resume=...)` continues from last checkpoint
 - [ ] Max iteration guards: `MAX_QA_ITERATIONS` (engineer loop) + `MAX_QA_ANALYSER_ITERATIONS` (spec loop)
 - [ ] FAILED terminal state: distinguish from DONE in API response, UI, and Langfuse
-- [ ] Production checkpoint: swap `SqliteSaver` → `PostgresSaver` (`langgraph-checkpoint-postgres`)
+- [ ] Job registry persistence: recover `_jobs` from Postgres on server restart
 - [ ] Concurrent isolation: always pass `thread_id=job_id` in LangGraph config

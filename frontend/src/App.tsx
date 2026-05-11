@@ -143,28 +143,29 @@ function ApprovalBanner({
   loading: boolean;
 }) {
   return (
-    <div className="shrink-0 bg-amber-50 border-t-2 border-amber-300 px-6 py-4 flex items-center justify-between gap-4 shadow-xl">
-      <div className="flex items-center gap-3 min-w-0">
-        <span className="text-2xl shrink-0">⏸</span>
-        <div className="min-w-0">
-          <p className="font-bold text-amber-900 text-sm">Spec ready — your approval needed</p>
+    <div className="shrink-0 bg-amber-50 border-t-2 border-amber-300 px-6 py-4 shadow-xl">
+      <div className="flex items-start gap-3 mb-3">
+        <span className="text-2xl shrink-0 mt-0.5">⏸</span>
+        <div>
+          <p className="font-bold text-amber-900 text-sm">Spec ready — your approval required before Engineering starts</p>
           <p className="text-xs text-amber-700 mt-0.5">
-            Review the spec above. Approve to start Engineering, or Reject to cancel.
+            Review the <strong>Spec Review</strong> tab. Once you approve, the Engineer will write all code based on this spec.
+            Rejection cancels the pipeline — you can start a new run with a revised requirement.
           </p>
         </div>
       </div>
-      <div className="flex gap-3 shrink-0">
+      <div className="flex gap-3 justify-end">
         <button
           onClick={onReject}
           disabled={loading}
           className="px-4 py-2 rounded-lg border-2 border-red-300 text-red-700 text-sm font-semibold hover:bg-red-50 transition-colors disabled:opacity-40"
         >
-          ✗ Reject
+          ✗ Reject &amp; Cancel
         </button>
         <button
           onClick={onApprove}
           disabled={loading}
-          className="px-5 py-2 rounded-lg bg-green-600 text-white text-sm font-bold hover:bg-green-700 transition-colors shadow disabled:opacity-60 flex items-center gap-2"
+          className="px-6 py-2 rounded-lg bg-green-600 text-white text-sm font-bold hover:bg-green-700 transition-colors shadow disabled:opacity-60 flex items-center gap-2"
         >
           {loading
             ? <><span className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" /> Approving…</>
@@ -337,6 +338,7 @@ export default function App() {
   const [rightTab, setRightTab] = useState<RightTab>("spec");
   const [approveLoading, setApproveLoading] = useState(false);
   const [cancelPending, setCancelPending] = useState(false);
+  const [loadJobId, setLoadJobId] = useState("");
 
   // Switch tabs in effect (never during render)
   useEffect(() => {
@@ -402,6 +404,40 @@ export default function App() {
                 cancelPending={cancelPending}
               />
             </div>
+
+            {/* Load existing job by ID — shown only when idle */}
+            {status === "idle" && (
+              <div>
+                <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400 mb-2">
+                  Resume Existing Job
+                </p>
+                <div className="flex flex-col gap-1.5">
+                  <input
+                    type="text"
+                    value={loadJobId}
+                    onChange={(e) => setLoadJobId(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" && loadJobId.trim()) {
+                        pipeline.resume(loadJobId.trim());
+                        setLoadJobId("");
+                      }
+                    }}
+                    placeholder="Paste job ID…"
+                    className="w-full text-xs px-2.5 py-1.5 border border-gray-200 rounded-lg font-mono focus:outline-none focus:ring-2 focus:ring-blue-300 placeholder-gray-300"
+                  />
+                  <button
+                    disabled={!loadJobId.trim()}
+                    onClick={() => {
+                      pipeline.resume(loadJobId.trim());
+                      setLoadJobId("");
+                    }}
+                    className="w-full text-xs py-1.5 rounded-lg bg-gray-800 text-white font-semibold hover:bg-gray-700 transition-colors disabled:opacity-40"
+                  >
+                    Load Job
+                  </button>
+                </div>
+              </div>
+            )}
 
             {/* Project folder path */}
             {jobData?.project_dir && (
