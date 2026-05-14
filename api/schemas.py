@@ -44,6 +44,12 @@ class JobStatusResponse(BaseModel):
     error: Optional[str] = None        # error message when status="failed"
 
 
+class ResumeJobResponse(BaseModel):
+    job_id: str
+    status: str
+    message: str
+
+
 class CancelJobResponse(BaseModel):
     job_id: str
     message: str

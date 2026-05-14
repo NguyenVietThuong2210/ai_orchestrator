@@ -8,6 +8,8 @@
 
 | Ngày | Thay đổi |
 |---|---|
+| 2026-05-12 | **Hello Django sample project**: Created minimal Django 4.2+ "Hello World" app under `projects/hello_django/`. Files: `manage.py`, `requirements.txt`, `README.md`, `hello_django/` project package (settings, urls, wsgi, asgi), `hello/` app (views, urls, apps, models, tests, migrations). Single GET `/` view returning `HttpResponse('Hello, World!')` with 405 on all other methods. |
+| 2026-05-11 | **Thống nhất 1 root**: Engineer/QA chạy từ `projects/<name>/` (không còn `artifacts/`). Xóa `_get_artifact_dir()`. UI redesign: 4 tabs (Tasks/Spec/Code/QA), SprintBoard, SpecReview cải tiến. WatchFiles fix (`python -m api.main`). Clear toàn bộ checkpoints cũ. |
 | 2026-05-10 | **SQLite bị xóa hoàn toàn** — chỉ dùng `AsyncPostgresSaver` (PostgreSQL). Docker Compose stack. QA audit fixes (CORS, idempotency, secret filtering, null guards, SSE filter). Windows `claude.cmd` fix. |
 | 2026-05-09 | Initial build — LangGraph + 4 agents + FastAPI + React + MCP Server |
 

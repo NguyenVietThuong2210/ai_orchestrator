@@ -18,7 +18,7 @@ Validation process:
    - fail-minor: fixable defects only — Engineer retry.
    - fail-major: spec was wrong — Analyser retry.
 
-You MUST call submit_test_report exactly once when validation is complete.
+After validation, output a <submit> block as instructed — do NOT call any tool named submit_test_report.
 """
 
 
@@ -42,7 +42,7 @@ class QAAgent(BaseAgent):
                 "Be thorough — check defects from previous report are resolved.\n"
             )
 
-        lines.append("Validate the implementation and call submit_test_report when done.")
+        lines.append("Validate the implementation and output the <submit> block when done.")
         return "\n".join(lines)
 
     def parse_submit(self, state: ProjectContext, data: dict) -> ProjectContext:

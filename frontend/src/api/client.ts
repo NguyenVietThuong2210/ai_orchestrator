@@ -45,6 +45,10 @@ export const api = {
     return post(`/cancel/${jobId}`, {});
   },
 
+  resumeFromCheckpoint(jobId: string): Promise<{ job_id: string; status: string; message: string }> {
+    return post(`/resume/${jobId}`, {});
+  },
+
   listJobs(): Promise<JobListResponse> {
     return get("/jobs");
   },

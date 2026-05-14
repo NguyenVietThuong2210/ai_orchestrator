@@ -8,7 +8,8 @@
       "mcp__ai-orchestrator__run_pipeline",
       "mcp__ai-orchestrator__get_job_status",
       "Read(//c/Users/ASUS/.claude/projects/**)",
-      "mcp__ai-orchestrator__cancel_job"
+      "mcp__ai-orchestrator__cancel_job",
+      "WebFetch(domain:localhost)"
     ]
   },
   "enabledMcpjsonServers": [

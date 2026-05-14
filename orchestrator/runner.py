@@ -93,7 +93,14 @@ async def run_pipeline(requirement: str, job_id: str | None = None) -> ProjectCo
 
 async def resume_pipeline(job_id: str, decision: str = "approve") -> ProjectContext:
     """
-    Resume a paused pipeline after Human Gate.
+    Resume a paused or stalled pipeline.
+
+    Two cases:
+    1. Graph is interrupted at human_gate (snapshot.next == ("human_gate",)):
+       → send Command(resume=decision) to pass the interrupt.
+    2. Graph has a pending non-interrupt node (e.g. next == ("engineer",)) but
+       the asyncio task died mid-flight:
+       → call astream(None, config) to continue from the last checkpoint.
 
     decision: "approve" → continue to Engineering
               anything else → spec rejected, pipeline raises ValueError
@@ -101,10 +108,26 @@ async def resume_pipeline(job_id: str, decision: str = "approve") -> ProjectCont
     config = {"configurable": {"thread_id": job_id}}
     app    = await get_app()
 
-    logger.info("▶ Resuming pipeline — job_id=%s decision=%s", job_id, decision)
+    snapshot = await app.aget_state(config)
+    next_nodes = snapshot.next or ()
+
+    # Determine correct resume strategy
+    if "human_gate" in next_nodes:
+        # Still at the interrupt — send the user's decision
+        logger.info("▶ Resuming at human_gate — job_id=%s decision=%s", job_id, decision)
+        if decision != "approve":
+            raise ValueError(f"Spec rejected by user (decision={decision!r})")
+        stream_input = Command(resume=decision)
+    elif next_nodes:
+        # Already past human_gate but stalled (task died before node ran)
+        logger.info("▶ Continuing stalled pipeline from checkpoint — job_id=%s next=%s", job_id, next_nodes)
+        stream_input = None
+    else:
+        logger.info("▶ Pipeline already complete — job_id=%s", job_id)
+        return snapshot.values
 
     try:
-        async for event in app.astream(Command(resume=decision), config, stream_mode="values"):
+        async for event in app.astream(stream_input, config, stream_mode="values"):
             _log_event(event)
     except Exception as exc:
         logger.error("▶ resume astream raised: %s: %s", type(exc).__name__, exc, exc_info=True)

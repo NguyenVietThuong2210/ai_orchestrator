@@ -19,6 +19,7 @@ export interface PipelineState {
 export interface PipelineActions {
   start: (requirement: string) => Promise<void>;
   resume: (jobId: string) => void;  // load an existing job by ID into local state
+  rerunFromCheckpoint: () => Promise<void>;  // resume failed pipeline from last checkpoint
   approve: () => Promise<void>;
   reject: () => Promise<void>;
   cancel: () => Promise<void>;
@@ -175,10 +176,24 @@ export function usePipeline(): PipelineState & PipelineActions {
     setState({ ...INITIAL, jobId, status: "running" });
   }, [stopPolling]);
 
+  const rerunFromCheckpoint = useCallback(async () => {
+    if (!state.jobId) return;
+    try {
+      await api.resumeFromCheckpoint(state.jobId);
+      // Transition to running — triggers polling useEffect
+      setState((prev) => ({ ...prev, status: "running", error: null, sseEvents: [] }));
+    } catch (err) {
+      setState((prev) => ({
+        ...prev,
+        error: `Resume failed: ${err instanceof Error ? err.message : String(err)}`,
+      }));
+    }
+  }, [state.jobId]);
+
   const reset = useCallback(() => {
     stopPolling();
     setState(INITIAL);
   }, [stopPolling]);
 
-  return { ...state, start, resume, approve, reject, cancel, reset };
+  return { ...state, start, resume, rerunFromCheckpoint, approve, reject, cancel, reset };
 }

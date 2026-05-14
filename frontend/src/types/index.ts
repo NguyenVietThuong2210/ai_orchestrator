@@ -25,12 +25,43 @@ export interface Task {
   status: string;
 }
 
+export interface Component {
+  name: string;
+  responsibility: string;
+  dependencies?: string[];
+}
+
+export interface ApiContract {
+  method: string;
+  path: string;
+  request_schema?: Record<string, unknown>;
+  response_schema?: Record<string, unknown>;
+  errors?: string[];
+  // legacy fields from older runs
+  response?: string;
+  description?: string;
+}
+
+export interface DataModel {
+  name: string;
+  fields: Array<string | Record<string, unknown>>;
+  description?: string;
+}
+
+export interface Risk {
+  description: string;
+  severity?: "low" | "medium" | "high";
+  mitigation?: string;
+  // legacy
+  id?: string;
+}
+
 export interface TechnicalSpec {
   overview: string;
-  components: Array<{ name: string; description: string }>;
-  api_contracts: Array<{ method: string; path: string; response: string }>;
-  data_models: Array<{ name: string; fields: string[] }>;
-  risks: Array<{ id: string; description: string }>;
+  components: Component[];
+  api_contracts: ApiContract[];
+  data_models: DataModel[];
+  risks: Risk[];
   acceptance_criteria: string[];
 }
 

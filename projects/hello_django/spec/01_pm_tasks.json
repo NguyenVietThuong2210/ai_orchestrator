@@ -1,0 +1,44 @@
+[
+  {
+    "id": "T1",
+    "title": "Initialize Django project scaffold and configure settings",
+    "description": "Create projects/hello_django/ directory with manage.py, hello_django/ package (settings.py, urls.py, wsgi.py, asgi.py, __init__.py). Configure INSTALLED_APPS, DATABASES (SQLite), MIDDLEWARE. Create root urls.py.",
+    "priority": 1,
+    "status": "pending"
+  },
+  {
+    "id": "T2",
+    "title": "Create Django app 'hello' and register it",
+    "description": "Create hello/ app directory with standard structure (__init__.py, views.py, urls.py, apps.py, models.py, tests.py, migrations/__init__.py). Add 'hello' to INSTALLED_APPS.",
+    "priority": 1,
+    "status": "pending"
+  },
+  {
+    "id": "T3",
+    "title": "Implement 'Hello, World!' view",
+    "description": "Write hello/views.py with a view function that takes HttpRequest and returns HttpResponse('Hello, World!').",
+    "priority": 1,
+    "status": "pending"
+  },
+  {
+    "id": "T4",
+    "title": "Configure URL routing for root path",
+    "description": "Create hello/urls.py mapping root path '' to the hello view. Update root urls.py to include hello.urls with path().",
+    "priority": 1,
+    "status": "pending"
+  },
+  {
+    "id": "T5",
+    "title": "Create requirements.txt with dependencies",
+    "description": "Create requirements.txt in projects/hello_django/ listing Django>=4.2.",
+    "priority": 1,
+    "status": "pending"
+  },
+  {
+    "id": "T6",
+    "title": "Document setup and run instructions",
+    "description": "Create README.md with installation steps (pip install -r requirements.txt), run command (python manage.py runserver), and access URL (http://localhost:8000/).",
+    "priority": 2,
+    "status": "pending"
+  }
+]

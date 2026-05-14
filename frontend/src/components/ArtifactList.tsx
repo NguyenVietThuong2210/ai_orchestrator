@@ -1,6 +1,7 @@
 interface Props {
   artifactPaths: Record<string, string>;
   specDir?: string | null;
+  projectDir?: string | null;
 }
 
 const SPEC_FILES = [
@@ -14,11 +15,22 @@ const SPEC_FILES = [
   { file: "_pipeline.json",          label: "Pipeline Manifest",  icon: "🗂"  },
 ];
 
-export function ArtifactList({ artifactPaths, specDir }: Props) {
+export function ArtifactList({ artifactPaths, specDir, projectDir }: Props) {
   const codeEntries = Object.entries(artifactPaths);
 
   return (
     <div className="space-y-5">
+
+      {/* Project root */}
+      {projectDir && (
+        <div className="rounded-lg bg-gray-800 px-3 py-2 flex items-center gap-2">
+          <span className="text-base shrink-0">📂</span>
+          <div>
+            <p className="text-[10px] text-gray-400 uppercase tracking-wide">Project Root</p>
+            <p className="text-xs font-mono text-green-300 break-all">{projectDir}</p>
+          </div>
+        </div>
+      )}
 
       {/* Spec folder */}
       {specDir && (
@@ -73,8 +85,12 @@ export function ArtifactList({ artifactPaths, specDir }: Props) {
         </div>
       )}
 
-      {!specDir && codeEntries.length === 0 && (
-        <p className="text-sm text-gray-400 text-center pt-8">No artifacts yet.</p>
+      {!specDir && !projectDir && codeEntries.length === 0 && (
+        <div className="flex flex-col items-center justify-center pt-12 gap-3 text-gray-400">
+          <span className="text-4xl">⚙️</span>
+          <p className="text-sm">No code artifacts yet.</p>
+          <p className="text-xs opacity-70">Files appear here after the Engineer agent completes.</p>
+        </div>
       )}
     </div>
   );

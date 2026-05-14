@@ -1,25 +1,20 @@
 from __future__ import annotations
 
-import json
-import os
-
 from agents.base import BaseAgent
 from orchestrator.context import ProjectContext
 
 
-def _artifact_dir() -> str:
-    return os.getenv("ARTIFACT_DIR", "./artifacts")
-
-
-_SYSTEM_PROMPT_TEMPLATE = """\
+_SYSTEM_PROMPT = """\
 You are a Senior Software Engineer. Implement the feature exactly as described in the technical spec.
 
 Rules:
 - Write production-quality code, no placeholders, no TODOs.
-- All files go to: {artifact_dir}/
+- Write all files to the CURRENT DIRECTORY using your file tools.
+- Do NOT create an "artifacts/" or "projects/" subdirectory — you are already inside the project root.
+- The spec/ subdirectory exists for documentation — do NOT write code files there.
 - Include a requirements.txt or pyproject.toml if installing packages.
 - If fixing QA defects, address every defect in the report — do not skip any.
-- You MUST call submit_implementation exactly once when all files are written.
+- After writing all files, output a <submit> block as instructed — do NOT call any tool named submit.
 """
 
 
@@ -28,10 +23,9 @@ class EngineerAgent(BaseAgent):
 
     @property
     def system_prompt(self) -> str:
-        return _SYSTEM_PROMPT_TEMPLATE.format(artifact_dir=_artifact_dir())
+        return _SYSTEM_PROMPT
 
     def build_prompt(self, state: ProjectContext) -> str:
-        artifact_dir = _artifact_dir()
         lines = [f"# User Requirement\n{state['request']}\n"]
         lines.append(self._json_block("Technical Spec", state.get("spec", {})))
         lines.append(self._json_block("Task List", state.get("tasks", [])))
@@ -45,8 +39,9 @@ class EngineerAgent(BaseAgent):
             lines.append(self._json_block("Defects", report.get("defects", [])))
 
         lines.append(
-            f"\nWrite all implementation files to {artifact_dir}/ "
-            "then call submit_implementation."
+            "\nWrite all files to the current directory (the project root). "
+            "Do NOT write into spec/ — that folder is for documentation. "
+            "Then output the <submit> block."
         )
         return "\n".join(lines)
 

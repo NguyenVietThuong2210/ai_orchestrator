@@ -26,8 +26,12 @@ from orchestrator.context import ProjectContext, AgentEvent
 logger = logging.getLogger(__name__)
 
 
-def _get_artifact_dir() -> str:
-    return os.getenv("ARTIFACT_DIR", "./artifacts")
+def _get_project_cwd(state) -> str:
+    """Return the project root directory for engineer/qa subprocess cwd."""
+    project_dir = state.get("project_dir") if state else None
+    if project_dir:
+        return project_dir
+    return os.getenv("PROJECTS_ROOT", "./projects")
 
 
 def _claude_cmd() -> str:
@@ -81,11 +85,14 @@ ending with a <submit> block containing valid JSON. All arrays must be present (
 
     "engineer": """
 ---
-IMPORTANT: Write all required files using your file tools. Then output a <submit> block:
+IMPORTANT: Write all required files using your file tools directly in the current directory \
+(this is the project root — do NOT create an 'artifacts/' or 'projects/' subdirectory). \
+The spec/ subdirectory in this folder is for documentation — do NOT touch it. \
+Then output a <submit> block. Paths in artifact_paths are relative to the current directory:
 
 <submit>
 {
-  "artifact_paths": {"filename.py": "./artifacts/filename.py"},
+  "artifact_paths": {"manage.py": "manage.py", "config/settings.py": "config/settings.py"},
   "summary": "Brief description of what was implemented"
 }
 </submit>""",
@@ -184,9 +191,9 @@ class ClaudeCodeBackend(BaseBackend):
         # System prompt is passed via --system-prompt flag to override CLAUDE.md.
         prompt = agent.build_prompt(state) + SUBMIT_INSTRUCTIONS[agent_name]
 
-        # Engineer and QA need filesystem access — run from ARTIFACT_DIR
-        artifact_dir = _get_artifact_dir()
-        cwd = artifact_dir if agent_name in ("engineer", "qa") else None
+        # Engineer and QA need filesystem access — run from project_dir.
+        # spec/ subdirectory is for documentation only; code goes in the project root.
+        cwd = _get_project_cwd(state) if agent_name in ("engineer", "qa") else None
         if cwd:
             os.makedirs(cwd, exist_ok=True)
 

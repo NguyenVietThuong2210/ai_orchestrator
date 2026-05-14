@@ -22,7 +22,7 @@ from api.schemas import (
     RunPipelineRequest, RunPipelineResponse,
     ApproveSpecRequest, ApproveSpecResponse,
     JobStatusResponse, CancelJobResponse,
-    JobSummary, JobListResponse,
+    ResumeJobResponse, JobSummary, JobListResponse,
 )
 from orchestrator.runner import run_pipeline, resume_pipeline
 from orchestrator.graph import get_app
@@ -62,8 +62,9 @@ async def start_pipeline(req: RunPipelineRequest):
 
 @router.post("/approve-spec", response_model=ApproveSpecResponse)
 async def approve_spec(req: ApproveSpecRequest):
+    # Lazily register so cancel/idempotency logic works for cross-session jobs
     if req.job_id not in _jobs:
-        raise HTTPException(404, f"job_id {req.job_id!r} not found")
+        _jobs[req.job_id] = {"status": "unknown", "task": None, "error": None}
 
     # Idempotency: don't spawn a second resume task if one is already in flight
     existing = _jobs[req.job_id].get("task")
@@ -183,12 +184,16 @@ async def list_jobs():
     Return recent jobs (most recent first) — used by UI to auto-detect MCP-started pipelines.
     Sources: in-memory _jobs (current session) + Postgres checkpoints (survives restarts).
     """
-    # Query Postgres checkpoints table for recent thread IDs
+    # Initialize app first — this sets _checkpointer on the graph module
+    app = await get_app()
+
+    # Query Postgres checkpoints table for recent thread IDs.
+    # Import the module (not the value) so we always get the current _checkpointer reference.
+    import orchestrator.graph as _graph
     db_thread_ids: list[str] = []
-    from orchestrator.graph import _checkpointer
-    if _checkpointer is not None:
+    if _graph._checkpointer is not None:
         try:
-            async with _checkpointer.conn.cursor() as cur:
+            async with _graph._checkpointer.conn.cursor() as cur:
                 await cur.execute(
                     "SELECT thread_id FROM ("
                     "  SELECT DISTINCT ON (thread_id) thread_id, checkpoint_id"
@@ -209,8 +214,6 @@ async def list_jobs():
             seen.add(jid)
             ordered.append(jid)
 
-    # Derive real status from LangGraph for each job
-    app = await get_app()
     result: list[JobSummary] = []
     for jid in ordered[:20]:
         try:
@@ -220,17 +223,20 @@ async def list_jobs():
             next_nodes = snapshot.next or ()
             current_node = next_nodes[0] if next_nodes else "end"
 
-            job_meta = _jobs.get(jid, {})
+            # Skip jobs with no LangGraph state — deleted from DB or never checkpointed
+            if not state:
+                continue
+
+            # LangGraph state is the source of truth.
             if state.get("status") in ("done", "failed"):
                 derived = state["status"]
-            elif job_meta.get("status") == "failed":
-                derived = "failed"
             elif current_node == "human_gate":
                 derived = "waiting_approval"
-            elif not state:
-                derived = job_meta.get("status", "unknown")
-            else:
+            elif next_nodes:
+                # Pending LangGraph work — show as running even if asyncio task died
                 derived = "running"
+            else:
+                derived = "done"
 
             # Lazily register so /status/{job_id} doesn't 404
             if jid not in _jobs:
@@ -241,6 +247,63 @@ async def list_jobs():
             result.append(JobSummary(job_id=jid, status=_jobs.get(jid, {}).get("status", "unknown")))
 
     return JobListResponse(jobs=result)
+
+
+@router.post("/resume/{job_id}", response_model=ResumeJobResponse)
+async def resume_job(job_id: str):
+    """
+    Resume a failed/stalled pipeline from the last LangGraph checkpoint.
+    Works when the graph has a pending next-node (e.g. analyser, engineer, qa)
+    but the asyncio task died before it could run.
+    Does NOT work if the LangGraph terminal nodes (done/failed) already ran.
+    """
+    app = await get_app()
+    config = {"configurable": {"thread_id": job_id}}
+    snapshot = await app.aget_state(config)
+
+    if not snapshot.values:
+        raise HTTPException(404, f"job_id {job_id!r} not found in LangGraph")
+
+    next_nodes = snapshot.next or ()
+    if not next_nodes:
+        raise HTTPException(400, "Pipeline already at terminal state — cannot resume. Start a new pipeline.")
+
+    if "human_gate" in next_nodes:
+        raise HTTPException(400, "Pipeline is waiting for spec approval — use POST /approve-spec instead.")
+
+    # Lazily register so cancel/status work
+    if job_id not in _jobs:
+        _jobs[job_id] = {"status": "running", "task": None, "error": None}
+
+    # Guard: don't double-spawn
+    existing = _jobs[job_id].get("task")
+    if existing and not existing.done():
+        return ResumeJobResponse(
+            job_id=job_id,
+            status="running",
+            message="Pipeline is already running — duplicate request ignored",
+        )
+
+    async def _rerun() -> None:
+        try:
+            from orchestrator.runner import resume_pipeline
+            final = await resume_pipeline(job_id, decision="approve")
+            _jobs[job_id]["status"] = final.get("status", "done")
+        except asyncio.CancelledError:
+            _jobs[job_id]["status"] = "failed"
+        except Exception as exc:
+            logger.exception("Rerun error — job_id=%s", job_id)
+            _jobs[job_id].update({"status": "failed", "error": str(exc)})
+
+    task = asyncio.create_task(_rerun(), name=f"rerun-{job_id}")
+    _jobs[job_id] = {"status": "running", "task": task, "error": None}
+
+    node = next_nodes[0] if next_nodes else "unknown"
+    return ResumeJobResponse(
+        job_id=job_id,
+        status="running",
+        message=f"Pipeline resuming from checkpoint — next node: {node}",
+    )
 
 
 @router.post("/cancel/{job_id}", response_model=CancelJobResponse)

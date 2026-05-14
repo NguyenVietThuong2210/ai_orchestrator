@@ -25,11 +25,7 @@ const STEP_ORDER = ["pm", "analyser", "gate", "engineer", "qa"];
 
 type StepState = "done" | "active" | "pending" | "error";
 
-function getStepState(
-  key: string,
-  status: PipelineStatus,
-  currentNode: string | null,
-): StepState {
+function getStepState(key: string, status: PipelineStatus, currentNode: string | null): StepState {
   const idx = STEP_ORDER.indexOf(key);
   if (status === "done") return "done";
   if (status === "failed") {
@@ -40,9 +36,9 @@ function getStepState(
     return "pending";
   }
   const active =
-    status === "starting" ? "pm"
+    status === "starting"         ? "pm"
     : status === "waiting_approval" ? "gate"
-    : currentNode ? NODE_TO_STEP[currentNode] ?? null
+    : currentNode                   ? NODE_TO_STEP[currentNode] ?? null
     : null;
   const aIdx = active ? STEP_ORDER.indexOf(active) : -1;
   if (aIdx > idx) return "done";
@@ -52,13 +48,7 @@ function getStepState(
 
 // ── Pipeline flow bar ─────────────────────────────────────────────────────────
 
-function PipelineFlowBar({
-  status,
-  currentNode,
-}: {
-  status: PipelineStatus;
-  currentNode: string | null;
-}) {
+function PipelineFlowBar({ status, currentNode }: { status: PipelineStatus; currentNode: string | null }) {
   return (
     <div className="flex items-center w-full">
       {STEPS.map(({ key, label, icon }, i) => {
@@ -133,24 +123,17 @@ function CopyButton({ text }: { text: string }) {
 
 // ── Approve banner ────────────────────────────────────────────────────────────
 
-function ApprovalBanner({
-  onApprove,
-  onReject,
-  loading,
-}: {
-  onApprove: () => void;
-  onReject: () => void;
-  loading: boolean;
+function ApprovalBanner({ onApprove, onReject, loading }: {
+  onApprove: () => void; onReject: () => void; loading: boolean;
 }) {
   return (
     <div className="shrink-0 bg-amber-50 border-t-2 border-amber-300 px-6 py-4 shadow-xl">
       <div className="flex items-start gap-3 mb-3">
         <span className="text-2xl shrink-0 mt-0.5">⏸</span>
         <div>
-          <p className="font-bold text-amber-900 text-sm">Spec ready — your approval required before Engineering starts</p>
+          <p className="font-bold text-amber-900 text-sm">Spec ready — approval required before Engineering starts</p>
           <p className="text-xs text-amber-700 mt-0.5">
-            Review the <strong>Spec Review</strong> tab. Once you approve, the Engineer will write all code based on this spec.
-            Rejection cancels the pipeline — you can start a new run with a revised requirement.
+            Review the <strong>Spec</strong> tab. Approve to let Engineer write code, or Reject to cancel.
           </p>
         </div>
       </div>
@@ -176,57 +159,93 @@ function ApprovalBanner({
   );
 }
 
-// ── Task board ────────────────────────────────────────────────────────────────
+// ── Sprint Board (Tasks tab) ──────────────────────────────────────────────────
 
 const STATUS_DOT: Record<string, string> = {
   done:        "bg-green-500",
-  in_progress: "bg-blue-500",
+  in_progress: "bg-blue-500 animate-pulse",
   pending:     "bg-gray-300",
 };
 
-const PRIORITY_LABEL: Record<number, { label: string; cls: string }> = {
-  1: { label: "P1", cls: "text-red-600 bg-red-50" },
-  2: { label: "P2", cls: "text-amber-600 bg-amber-50" },
-  3: { label: "P3", cls: "text-gray-500 bg-gray-100" },
+const STATUS_LABEL: Record<string, { label: string; cls: string }> = {
+  done:        { label: "Done",        cls: "bg-green-100 text-green-700" },
+  in_progress: { label: "In Progress", cls: "bg-blue-100 text-blue-700" },
+  pending:     { label: "To Do",       cls: "bg-gray-100 text-gray-500" },
 };
 
-function TaskBoard({ tasks }: { tasks: Task[] }) {
-  if (!tasks.length) return null;
-  return (
-    <div>
-      <p className="text-xs font-semibold uppercase tracking-wider text-gray-400 mb-2">
-        PM Tasks ({tasks.length})
-      </p>
-      <div className="space-y-1.5">
-        {tasks.map((t) => {
-          const pCfg = PRIORITY_LABEL[t.priority] ?? PRIORITY_LABEL[3];
-          return (
-            <div key={t.id} className="rounded-lg bg-purple-50 border border-purple-100 px-3 py-2">
-              <div className="flex items-start gap-2">
-                <span className={`w-2 h-2 rounded-full mt-1.5 shrink-0 ${STATUS_DOT[t.status] ?? "bg-gray-300"}`} />
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-1.5 flex-wrap">
-                    <span className={`text-[10px] px-1 rounded font-bold ${pCfg.cls}`}>{pCfg.label}</span>
-                    <span className="text-xs font-semibold text-purple-800 leading-tight">{t.title}</span>
-                  </div>
-                  {t.description && (
-                    <p className="text-[11px] text-purple-600 mt-0.5 leading-snug opacity-80 truncate" title={t.description}>
-                      {t.description}
-                    </p>
-                  )}
-                </div>
-              </div>
-            </div>
-          );
-        })}
+const PRIORITY_CFG: Record<number, { label: string; cls: string; border: string }> = {
+  1: { label: "P1 · Critical", cls: "text-red-600 bg-red-50",    border: "border-l-red-400" },
+  2: { label: "P2 · High",     cls: "text-amber-600 bg-amber-50", border: "border-l-amber-400" },
+  3: { label: "P3 · Medium",   cls: "text-blue-600 bg-blue-50",   border: "border-l-blue-300" },
+};
+
+function SprintBoard({ tasks }: { tasks: Task[] }) {
+  if (!tasks.length) {
+    return (
+      <div className="flex flex-col items-center justify-center h-full gap-3 text-gray-400">
+        <span className="text-4xl">📋</span>
+        <p className="text-sm">PM hasn't produced tasks yet.</p>
+        <p className="text-xs opacity-70">Tasks appear here after the PM agent completes.</p>
       </div>
+    );
+  }
+
+  return (
+    <div className="space-y-3">
+      <div className="flex items-center justify-between">
+        <h2 className="text-sm font-bold text-gray-700">Sprint Board</h2>
+        <div className="flex gap-2 text-[10px]">
+          <span className="px-2 py-0.5 rounded-full bg-gray-100 text-gray-500">
+            {tasks.filter((t) => t.status === "done").length}/{tasks.length} done
+          </span>
+          {tasks.filter((t) => t.status === "in_progress").length > 0 && (
+            <span className="px-2 py-0.5 rounded-full bg-blue-100 text-blue-600">
+              {tasks.filter((t) => t.status === "in_progress").length} in progress
+            </span>
+          )}
+        </div>
+      </div>
+
+      {tasks.map((t) => {
+        const pCfg = PRIORITY_CFG[t.priority] ?? PRIORITY_CFG[3];
+        const sCfg = STATUS_LABEL[t.status] ?? STATUS_LABEL["pending"];
+        return (
+          <div key={t.id} className={`rounded-lg bg-white border border-gray-200 border-l-4 ${pCfg.border} p-4 shadow-sm`}>
+            <div className="flex items-start justify-between gap-2 mb-2">
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className={`text-[10px] px-1.5 py-0.5 rounded font-bold ${pCfg.cls}`}>{pCfg.label}</span>
+                <span className={`text-[10px] px-1.5 py-0.5 rounded font-semibold ${sCfg.cls} flex items-center gap-1`}>
+                  <span className={`w-1.5 h-1.5 rounded-full inline-block ${STATUS_DOT[t.status] ?? "bg-gray-300"}`} />
+                  {sCfg.label}
+                </span>
+              </div>
+              <span className="text-[10px] font-mono text-gray-400 shrink-0">{t.id}</span>
+            </div>
+            <p className="text-sm font-semibold text-gray-800 mb-1 leading-snug">{t.title}</p>
+            {t.description && (
+              <p className="text-xs text-gray-600 leading-relaxed">{t.description}</p>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+// ── Stat tile ─────────────────────────────────────────────────────────────────
+
+function StatTile({ label, value, color = "text-gray-700" }: { label: string; value: string | number; color?: string }) {
+  return (
+    <div className="rounded-lg bg-gray-50 border border-gray-100 px-3 py-2 text-center">
+      <p className="text-[10px] text-gray-400 uppercase tracking-wide">{label}</p>
+      <p className={`text-lg font-bold ${color}`}>{value}</p>
     </div>
   );
 }
 
 // ── Right panel ───────────────────────────────────────────────────────────────
 
-type RightTab = "spec" | "qa" | "artifacts";
+type RightTab = "tasks" | "spec" | "code" | "qa";
 
 function RightPanel({
   pipeline,
@@ -240,17 +259,38 @@ function RightPanel({
   approveLoading: boolean;
 }) {
   const { status, jobData, approve, reject } = pipeline;
+  const hasTasks     = (jobData?.tasks?.length ?? 0) > 0;
   const hasSpec      = !!jobData?.spec;
   const hasQA        = !!jobData?.test_report;
-  const hasArtifacts = Object.keys(jobData?.artifact_paths ?? {}).length > 0;
-  const hasSpecDir   = !!jobData?.spec_dir;
+  const hasCode      = Object.keys(jobData?.artifact_paths ?? {}).length > 0 || !!jobData?.spec_dir;
 
   const tabs: { key: RightTab; label: string; badge?: string; enabled: boolean }[] = [
-    { key: "spec",      label: "Spec Review",  badge: status === "waiting_approval" ? "!" : undefined, enabled: true },
-    { key: "qa",        label: "QA Report",    enabled: hasQA },
-    { key: "artifacts", label: "Artifacts",
-      badge: hasArtifacts ? String(Object.keys(jobData?.artifact_paths ?? {}).length) : undefined,
-      enabled: hasArtifacts || hasSpecDir },
+    {
+      key: "tasks",
+      label: "Tasks",
+      badge: hasTasks ? String(jobData!.tasks.length) : undefined,
+      enabled: true,
+    },
+    {
+      key: "spec",
+      label: "Spec",
+      badge: status === "waiting_approval" ? "!" : undefined,
+      enabled: true,
+    },
+    {
+      key: "code",
+      label: "Code",
+      badge: Object.keys(jobData?.artifact_paths ?? {}).length > 0
+        ? String(Object.keys(jobData!.artifact_paths).length)
+        : undefined,
+      enabled: hasCode,
+    },
+    {
+      key: "qa",
+      label: "QA Report",
+      badge: jobData?.test_report ? (jobData.test_report.status === "pass" ? "✓" : "✗") : undefined,
+      enabled: hasQA,
+    },
   ];
 
   return (
@@ -272,7 +312,10 @@ function RightPanel({
             {label}
             {badge && (
               <span className={`absolute -top-1 -right-1 min-w-[1rem] h-4 px-0.5 rounded-full text-[9px] flex items-center justify-center font-bold
-                ${badge === "!" ? "bg-amber-400 text-amber-900" : "bg-blue-500 text-white"}`}>
+                ${badge === "!" ? "bg-amber-400 text-amber-900"
+                : badge === "✓" ? "bg-green-500 text-white"
+                : badge === "✗" ? "bg-red-500 text-white"
+                : "bg-blue-500 text-white"}`}>
                 {badge}
               </span>
             )}
@@ -282,11 +325,16 @@ function RightPanel({
 
       {/* Tab content */}
       <div className="flex-1 overflow-y-auto p-4 min-h-0">
+        {activeTab === "tasks" && (
+          <SprintBoard tasks={jobData?.tasks ?? []} />
+        )}
+
         {activeTab === "spec" && (
           hasSpec
             ? <SpecReview spec={jobData!.spec!} onApprove={approve} onReject={reject} showButtons={false} />
             : (
               <div className="flex flex-col items-center justify-center h-full gap-3 text-gray-400">
+                <span className="text-4xl">🔍</span>
                 {status === "idle"
                   ? <p className="text-sm">Start a pipeline to see the technical spec here.</p>
                   : <><div className="w-8 h-8 border-2 border-gray-200 border-t-blue-400 rounded-full animate-spin" />
@@ -296,17 +344,21 @@ function RightPanel({
             )
         )}
 
-        {activeTab === "qa" && (
-          hasQA
-            ? <TestReport report={jobData!.test_report!} />
-            : <div className="text-sm text-gray-400 text-center pt-12">QA report not yet available.</div>
-        )}
-
-        {activeTab === "artifacts" && (
+        {activeTab === "code" && (
           <ArtifactList
             artifactPaths={jobData?.artifact_paths ?? {}}
             specDir={jobData?.spec_dir}
+            projectDir={jobData?.project_dir}
           />
+        )}
+
+        {activeTab === "qa" && (
+          hasQA
+            ? <TestReport report={jobData!.test_report!} />
+            : <div className="flex flex-col items-center justify-center h-full gap-3 text-gray-400">
+                <span className="text-4xl">✅</span>
+                <p className="text-sm">QA report not yet available.</p>
+              </div>
         )}
       </div>
 
@@ -318,32 +370,27 @@ function RightPanel({
   );
 }
 
-// ── Stat tile ─────────────────────────────────────────────────────────────────
-
-function StatTile({ label, value, color = "text-gray-700" }: { label: string; value: string | number; color?: string }) {
-  return (
-    <div className="rounded-lg bg-gray-50 border border-gray-100 px-3 py-2 text-center">
-      <p className="text-[10px] text-gray-400 uppercase tracking-wide">{label}</p>
-      <p className={`text-lg font-bold ${color}`}>{value}</p>
-    </div>
-  );
-}
-
 // ── Root app ──────────────────────────────────────────────────────────────────
 
 export default function App() {
   const pipeline = usePipeline();
-  const { status, jobId, jobData, sseEvents, error, approve, reject } = pipeline;
+  const { status, jobId, jobData, sseEvents, error, approve, reject, rerunFromCheckpoint } = pipeline;
 
-  const [rightTab, setRightTab] = useState<RightTab>("spec");
+  const [rightTab, setRightTab] = useState<RightTab>("tasks");
   const [approveLoading, setApproveLoading] = useState(false);
   const [cancelPending, setCancelPending] = useState(false);
   const [loadJobId, setLoadJobId] = useState("");
 
-  // Switch tabs in effect (never during render)
+  // Auto-switch tabs when pipeline progresses
   useEffect(() => {
     if (status === "waiting_approval") setRightTab("spec");
   }, [status]);
+
+  useEffect(() => {
+    if (jobData?.tasks && jobData.tasks.length > 0 && status === "running") {
+      setRightTab("tasks");
+    }
+  }, [jobData?.tasks?.length]);
 
   useEffect(() => {
     if (status === "done" && jobData?.test_report) setRightTab("qa");
@@ -355,7 +402,7 @@ export default function App() {
   }, [approve]);
 
   const handleCancel = useCallback(async () => {
-    if (!window.confirm("Cancel this pipeline run? The in-flight agent subprocess may still complete.")) return;
+    if (!window.confirm("Cancel this pipeline run?")) return;
     setCancelPending(true);
     try { await pipeline.cancel(); } finally { setCancelPending(false); }
   }, [pipeline]);
@@ -374,7 +421,6 @@ export default function App() {
 
         {jobId && <CopyButton text={jobId} />}
 
-        {/* Flow bar */}
         <div className="flex-1 max-w-md mx-auto hidden sm:block">
           {isActive
             ? <PipelineFlowBar status={status} currentNode={jobData?.current_node ?? null} />
@@ -389,7 +435,7 @@ export default function App() {
       <div className="flex flex-1 min-h-0">
 
         {/* Sidebar */}
-        <aside className="w-60 shrink-0 bg-white border-r border-gray-100 flex flex-col min-h-0">
+        <aside className="w-56 shrink-0 bg-white border-r border-gray-100 flex flex-col min-h-0">
           <div className="flex-1 overflow-y-auto p-3 space-y-4">
 
             <div>
@@ -405,7 +451,7 @@ export default function App() {
               />
             </div>
 
-            {/* Load existing job by ID — shown only when idle */}
+            {/* Resume existing job — shown only when idle */}
             {status === "idle" && (
               <div>
                 <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400 mb-2">
@@ -427,10 +473,7 @@ export default function App() {
                   />
                   <button
                     disabled={!loadJobId.trim()}
-                    onClick={() => {
-                      pipeline.resume(loadJobId.trim());
-                      setLoadJobId("");
-                    }}
+                    onClick={() => { pipeline.resume(loadJobId.trim()); setLoadJobId(""); }}
                     className="w-full text-xs py-1.5 rounded-lg bg-gray-800 text-white font-semibold hover:bg-gray-700 transition-colors disabled:opacity-40"
                   >
                     Load Job
@@ -442,31 +485,28 @@ export default function App() {
             {/* Project folder path */}
             {jobData?.project_dir && (
               <div className="rounded-lg bg-gray-50 border border-gray-200 px-3 py-2">
-                <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400 mb-1">Project Folder</p>
-                <p className="text-xs font-mono text-blue-700 break-all">{jobData.project_dir}</p>
-                {jobData.spec_dir && (
-                  <p className="text-[10px] font-mono text-gray-400 mt-0.5">└─ spec/</p>
-                )}
+                <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400 mb-1">Project</p>
+                <p className="text-[11px] font-mono text-blue-700 break-all">{jobData.project_dir}</p>
               </div>
             )}
 
             {/* Stats */}
             {jobData && (
               <div className="grid grid-cols-2 gap-2">
-                <StatTile label="Eng retry"  value={jobData.iteration} color={jobData.iteration > 0 ? "text-amber-600" : "text-gray-700"} />
-                <StatTile label="Spec retry" value={jobData.qa_analyser_iteration} color={jobData.qa_analyser_iteration > 0 ? "text-amber-600" : "text-gray-700"} />
+                <StatTile
+                  label="Eng retry"
+                  value={jobData.iteration}
+                  color={jobData.iteration > 0 ? "text-amber-600" : "text-gray-700"}
+                />
+                <StatTile
+                  label="Spec retry"
+                  value={jobData.qa_analyser_iteration}
+                  color={jobData.qa_analyser_iteration > 0 ? "text-amber-600" : "text-gray-700"}
+                />
                 {jobData.history.length > 0 && (
                   <StatTile label="Agents run" value={jobData.history.length} />
                 )}
-                {jobData.cost_estimate_usd !== null && (
-                  <StatTile label="Cost" value={jobData.cost_estimate_usd === 0 ? "$0" : `$${jobData.cost_estimate_usd?.toFixed(4)}`} />
-                )}
               </div>
-            )}
-
-            {/* PM tasks */}
-            {(jobData?.tasks?.length ?? 0) > 0 && (
-              <TaskBoard tasks={jobData!.tasks} />
             )}
           </div>
 
@@ -480,13 +520,13 @@ export default function App() {
         {/* Main: timeline + right panel */}
         <div className="flex flex-1 min-w-0 min-h-0">
 
-          {/* Left: Agent timeline */}
-          <div className="w-72 shrink-0 border-r border-gray-100 bg-white flex flex-col min-h-0">
+          {/* Agent timeline */}
+          <div className="w-64 shrink-0 border-r border-gray-100 bg-white flex flex-col min-h-0">
             <div className="shrink-0 px-3 py-2 border-b border-gray-100 flex items-center justify-between">
-              <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400">Agent Timeline</p>
+              <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400">Agent Activity</p>
               {jobData && (
                 <span className="text-[10px] text-gray-400">
-                  {jobData.history.length} event{jobData.history.length !== 1 ? "s" : ""}
+                  {jobData.history.length} run{jobData.history.length !== 1 ? "s" : ""}
                 </span>
               )}
             </div>
@@ -503,25 +543,35 @@ export default function App() {
             </div>
           </div>
 
-          {/* Right: Spec / QA / Artifacts */}
+          {/* Right panel: Tasks / Spec / Code / QA */}
           <div className="flex-1 min-w-0 flex flex-col min-h-0">
             {/* Terminal banners */}
             {status === "done" && (
               <div className="shrink-0 mx-4 mt-3 rounded-xl bg-green-50 border border-green-200 px-4 py-2.5 flex items-center gap-3">
                 <span className="text-xl">✅</span>
                 <p className="text-sm font-semibold text-green-800">
-                  Pipeline complete
-                  {jobData?.cost_estimate_usd === 0 ? " — Mode B ($0 API cost)" : ""}
+                  Pipeline complete — all tests passed
+                  {jobData?.cost_estimate_usd === 0 ? " (Mode B: $0 API cost)" : ""}
                 </p>
               </div>
             )}
             {status === "failed" && (
-              <div className="shrink-0 mx-4 mt-3 rounded-xl bg-red-50 border border-red-200 px-4 py-2.5 flex items-center gap-3">
-                <span className="text-xl">❌</span>
-                <div>
+              <div className="shrink-0 mx-4 mt-3 rounded-xl bg-red-50 border border-red-200 px-4 py-2.5 flex items-start gap-3">
+                <span className="text-xl shrink-0">❌</span>
+                <div className="flex-1 min-w-0">
                   <p className="text-sm font-semibold text-red-800">Pipeline failed</p>
                   {error && <p className="text-[11px] text-red-600 font-mono mt-0.5 break-all">{error}</p>}
                 </div>
+                {/* Show re-run button only when LangGraph has a recoverable checkpoint */}
+                {jobData?.current_node && !["end", "done", "failed"].includes(jobData.current_node) && (
+                  <button
+                    onClick={rerunFromCheckpoint}
+                    className="shrink-0 px-3 py-1.5 rounded-lg bg-red-700 hover:bg-red-800 text-white text-xs font-bold transition-colors flex items-center gap-1.5"
+                    title="Resume from last LangGraph checkpoint — skips already-completed agents"
+                  >
+                    ↺ Re-run from <span className="font-mono">{jobData.current_node}</span>
+                  </button>
+                )}
               </div>
             )}
 
