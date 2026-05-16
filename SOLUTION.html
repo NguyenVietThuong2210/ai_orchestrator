@@ -1,0 +1,985 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AI Orchestrator — Kiến Trúc Hệ Thống</title>
+<style>
+  :root {
+    --primary: #6366f1;
+    --primary-dark: #4f46e5;
+    --accent: #06b6d4;
+    --green: #10b981;
+    --yellow: #f59e0b;
+    --red: #ef4444;
+    --purple: #8b5cf6;
+    --teal: #14b8a6;
+    --bg: #0f0f1a;
+    --bg2: #1a1a2e;
+    --bg3: #16213e;
+    --card: #1e1e35;
+    --border: #2d2d50;
+    --text: #e2e8f0;
+    --text-muted: #94a3b8;
+    --text-dim: #64748b;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+    background: var(--bg); color: var(--text);
+    line-height: 1.6; min-height: 100vh;
+  }
+  nav {
+    position: sticky; top: 0; z-index: 100;
+    background: rgba(15,15,26,0.95); backdrop-filter: blur(10px);
+    border-bottom: 1px solid var(--border);
+    padding: 0.75rem 2rem; display: flex; align-items: center; gap: 2rem;
+  }
+  nav .brand { font-weight: 700; font-size: 1rem; color: var(--primary); }
+  nav .nav-links { display: flex; gap: 1.5rem; list-style: none; flex-wrap: wrap; }
+  nav .nav-links a { color: var(--text-muted); text-decoration: none; font-size: 0.82rem; transition: color 0.2s; }
+  nav .nav-links a:hover { color: var(--text); }
+  .hero {
+    background: linear-gradient(135deg, var(--bg2) 0%, var(--bg3) 50%, rgba(99,102,241,0.1) 100%);
+    padding: 5rem 2rem 4rem; text-align: center; border-bottom: 1px solid var(--border);
+    position: relative; overflow: hidden;
+  }
+  .hero::before {
+    content: ''; position: absolute; inset: 0;
+    background: radial-gradient(circle at 30% 50%, rgba(99,102,241,0.08) 0%, transparent 60%),
+                radial-gradient(circle at 70% 50%, rgba(6,182,212,0.06) 0%, transparent 60%);
+  }
+  .hero-label {
+    display: inline-block; background: rgba(99,102,241,0.15);
+    color: var(--primary); padding: 0.3rem 0.8rem; border-radius: 99px;
+    font-size: 0.75rem; font-weight: 600; letter-spacing: 0.05em; text-transform: uppercase;
+    margin-bottom: 1rem; border: 1px solid rgba(99,102,241,0.3);
+  }
+  .hero h1 {
+    font-size: clamp(2rem, 5vw, 3.5rem); font-weight: 800; line-height: 1.2;
+    background: linear-gradient(135deg, var(--text) 0%, var(--primary) 50%, var(--accent) 100%);
+    -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text;
+    margin-bottom: 1rem;
+  }
+  .hero-sub { font-size: 1.1rem; color: var(--text-muted); max-width: 680px; margin: 0 auto 2rem; }
+  .container { max-width: 1100px; margin: 0 auto; padding: 0 2rem; }
+  section { padding: 4rem 0; border-bottom: 1px solid var(--border); }
+  section:last-of-type { border-bottom: none; }
+  .section-label {
+    display: inline-block; background: rgba(99,102,241,0.12);
+    color: var(--primary); padding: 0.25rem 0.7rem; border-radius: 99px;
+    font-size: 0.7rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.1em;
+    margin-bottom: 0.75rem;
+  }
+  .section-title { font-size: 1.8rem; font-weight: 700; color: var(--text); margin-bottom: 0.5rem; }
+  .section-sub { color: var(--text-muted); font-size: 0.95rem; max-width: 680px; margin-bottom: 2.5rem; }
+  .card {
+    background: var(--card); border: 1px solid var(--border);
+    border-radius: 12px; padding: 1.5rem; transition: border-color 0.2s;
+  }
+  .card:hover { border-color: rgba(99,102,241,0.4); }
+  .cards-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 1rem; }
+  .cards-3 { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 1rem; }
+  .cards-2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 1rem; }
+  .card-icon { font-size: 1.5rem; margin-bottom: 0.75rem; }
+  .card-title { font-size: 0.95rem; font-weight: 700; color: var(--text); margin-bottom: 0.4rem; }
+  .card-body { font-size: 0.85rem; color: var(--text-muted); line-height: 1.6; }
+  .stat-tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 1rem; margin: 1.5rem 0; }
+  .stat-tile { background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 1.25rem; text-align: center; }
+  .stat-num { font-size: 2rem; font-weight: 800; color: var(--primary); }
+  .stat-label { font-size: 0.75rem; color: var(--text-muted); margin-top: 0.25rem; }
+  .data-table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
+  .data-table th {
+    background: rgba(99,102,241,0.1); color: var(--primary);
+    padding: 0.6rem 1rem; text-align: left; font-weight: 600; border-bottom: 1px solid var(--border);
+  }
+  .data-table td { padding: 0.6rem 1rem; border-bottom: 1px solid var(--border); color: var(--text-muted); }
+  .data-table tr:last-child td { border-bottom: none; }
+  .data-table tr:nth-child(even) td { background: rgba(255,255,255,0.02); }
+  .data-table tr:hover td { background: rgba(99,102,241,0.05); }
+  .data-table td strong { color: var(--text); }
+  .code-block {
+    background: #0d1117; border: 1px solid var(--border); border-radius: 10px;
+    padding: 1.25rem; font-family: 'Cascadia Code', 'Fira Code', 'Consolas', monospace;
+    font-size: 0.8rem; color: #c9d1d9; overflow-x: auto; line-height: 1.7;
+  }
+  .timeline { display: flex; flex-direction: column; gap: 1.25rem; }
+  .timeline-item { border-left: 3px solid var(--primary); padding-left: 1rem; padding-bottom: 0.5rem; }
+  .timeline-item .tl-date { font-size: 0.75rem; color: var(--primary); font-weight: 700; margin-bottom: 0.25rem; }
+  .timeline-item .tl-title { font-weight: 600; color: var(--text); margin-bottom: 0.25rem; }
+  .timeline-item .tl-body { font-size: 0.84rem; color: var(--text-muted); }
+  .highlight-box {
+    background: linear-gradient(135deg, rgba(99,102,241,0.08), rgba(6,182,212,0.05));
+    border: 1px solid rgba(99,102,241,0.25); border-radius: 12px; padding: 1.5rem; margin: 1.5rem 0;
+  }
+  .highlight-box h3 { color: var(--primary); margin-bottom: 0.5rem; }
+  .tooltip { color: var(--text-dim); font-size: 0.8rem; margin-left: 0.25rem; }
+  .badge { display: inline-block; padding: 0.15rem 0.5rem; border-radius: 99px; font-size: 0.7rem; font-weight: 600; }
+  .badge-green  { background: rgba(16,185,129,0.15); color: var(--green); }
+  .badge-yellow { background: rgba(245,158,11,0.15); color: var(--yellow); }
+  .badge-red    { background: rgba(239,68,68,0.15);  color: var(--red); }
+  .badge-blue   { background: rgba(99,102,241,0.15); color: var(--primary); }
+  .badge-purple { background: rgba(139,92,246,0.15); color: var(--purple); }
+  .badge-teal   { background: rgba(20,184,166,0.15); color: var(--teal); }
+  /* Pipeline nodes */
+  .pipeline-row { display: flex; align-items: center; flex-wrap: wrap; gap: 0; justify-content: center; padding: 0.5rem 0; }
+  .pipe-node { display: flex; flex-direction: column; align-items: center; }
+  .pipe-icon {
+    width: 52px; height: 52px; border-radius: 12px; display: flex; align-items: center;
+    justify-content: center; font-size: 1.3rem; border: 2px solid;
+  }
+  .pipe-label { font-size: 0.62rem; font-weight: 700; text-align: center; color: var(--text-muted); max-width: 64px; line-height: 1.3; margin-top: 0.25rem; }
+  .pipe-arrow {
+    width: 24px; height: 2px; background: linear-gradient(90deg, var(--border), var(--primary));
+    position: relative; flex-shrink: 0; align-self: center; margin-bottom: 1.4rem;
+  }
+  .pipe-arrow::after {
+    content: ''; position: absolute; right: -4px; top: -4px;
+    border: 5px solid transparent; border-left-color: var(--primary);
+  }
+  .node-pm      { background: rgba(139,92,246,0.2);  border-color: rgba(139,92,246,0.5); }
+  .node-analyse { background: rgba(6,182,212,0.2);   border-color: rgba(6,182,212,0.5);  }
+  .node-spec    { background: rgba(245,158,11,0.2);  border-color: rgba(245,158,11,0.5); }
+  .node-gate    { background: rgba(245,158,11,0.2);  border-color: rgba(245,158,11,0.5); }
+  .node-task    { background: rgba(99,102,241,0.2);  border-color: rgba(99,102,241,0.5); }
+  .node-eng     { background: rgba(249,115,22,0.2);  border-color: rgba(249,115,22,0.5); }
+  .node-review  { background: rgba(234,179,8,0.2);   border-color: rgba(234,179,8,0.5);  }
+  .node-sec     { background: rgba(239,68,68,0.2);   border-color: rgba(239,68,68,0.5);  }
+  .node-qa      { background: rgba(16,185,129,0.2);  border-color: rgba(16,185,129,0.5); }
+  .node-deploy  { background: rgba(20,184,166,0.2);  border-color: rgba(20,184,166,0.5); }
+  .node-retro   { background: rgba(99,102,241,0.2);  border-color: rgba(99,102,241,0.5); }
+  .node-done    { background: rgba(16,185,129,0.3);  border-color: rgba(16,185,129,0.8); }
+  /* Intent cards */
+  .intent-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 0.75rem; margin-top: 1rem; }
+  .intent-card { background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 1rem; }
+  .intent-tag { font-size: 0.65rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; margin-bottom: 0.4rem; }
+  .intent-agents { font-size: 0.78rem; color: var(--text-muted); line-height: 1.5; }
+  footer {
+    background: var(--bg2); border-top: 1px solid var(--border);
+    padding: 2rem; text-align: center; color: var(--text-dim); font-size: 0.85rem;
+  }
+  footer strong { color: var(--text-muted); }
+  @media (max-width: 640px) {
+    .cards-3 { grid-template-columns: 1fr; }
+    .hero h1 { font-size: 1.8rem; }
+    nav .nav-links { display: none; }
+  }
+</style>
+</head>
+<body>
+
+<nav>
+  <span class="brand">🤖 AI Orchestrator</span>
+  <ul class="nav-links">
+    <li><a href="#changelog">Lịch Sử</a></li>
+    <li><a href="#overview">Tổng Quan</a></li>
+    <li><a href="#pipeline">Quy Trình</a></li>
+    <li><a href="#agents">Tác Nhân AI</a></li>
+    <li><a href="#intents">Mục Đích</a></li>
+    <li><a href="#tech">Công Nghệ</a></li>
+    <li><a href="#api">API &amp; MCP</a></li>
+    <li><a href="#risks">Rủi Ro</a></li>
+    <li><a href="#cost">Chi Phí</a></li>
+    <li><a href="#roadmap">Lộ Trình</a></li>
+  </ul>
+</nav>
+
+<!-- ── HERO ── -->
+<div class="hero">
+  <div class="container" style="position:relative;z-index:1;">
+    <div class="hero-label">Kiến Trúc Hệ Thống · v5d · 2026-05-16</div>
+    <h1>AI Orchestrator</h1>
+    <p class="hero-sub">
+      Hệ thống điều phối <strong style="color:var(--primary)">10 AI agents</strong> chuyên biệt,
+      tự động hóa toàn bộ quy trình phát triển phần mềm theo phương pháp
+      <strong style="color:var(--accent)">SDD — Specification-Driven Development</strong>.
+      Từ yêu cầu người dùng đến code đã deploy — không cần can thiệp thủ công.
+    </p>
+    <!-- Stat tiles in hero -->
+    <div style="display:flex;gap:1rem;justify-content:center;flex-wrap:wrap;margin-top:1.5rem;">
+      <div style="background:rgba(99,102,241,0.15);border:1px solid rgba(99,102,241,0.3);border-radius:10px;padding:0.75rem 1.5rem;text-align:center;">
+        <div style="font-size:1.8rem;font-weight:800;color:var(--primary);">10</div>
+        <div style="font-size:0.72rem;color:var(--text-muted);">AI Agents</div>
+      </div>
+      <div style="background:rgba(6,182,212,0.15);border:1px solid rgba(6,182,212,0.3);border-radius:10px;padding:0.75rem 1.5rem;text-align:center;">
+        <div style="font-size:1.8rem;font-weight:800;color:var(--accent);">61</div>
+        <div style="font-size:0.72rem;color:var(--text-muted);">Tests Pass</div>
+      </div>
+      <div style="background:rgba(16,185,129,0.15);border:1px solid rgba(16,185,129,0.3);border-radius:10px;padding:0.75rem 1.5rem;text-align:center;">
+        <div style="font-size:1.8rem;font-weight:800;color:var(--green);">15</div>
+        <div style="font-size:0.72rem;color:var(--text-muted);">API Endpoints</div>
+      </div>
+      <div style="background:rgba(245,158,11,0.15);border:1px solid rgba(245,158,11,0.3);border-radius:10px;padding:0.75rem 1.5rem;text-align:center;">
+        <div style="font-size:1.8rem;font-weight:800;color:var(--yellow);">5</div>
+        <div style="font-size:0.72rem;color:var(--text-muted);">Pipeline Intents</div>
+      </div>
+      <div style="background:rgba(139,92,246,0.15);border:1px solid rgba(139,92,246,0.3);border-radius:10px;padding:0.75rem 1.5rem;text-align:center;">
+        <div style="font-size:1.8rem;font-weight:800;color:var(--purple);">2</div>
+        <div style="font-size:0.72rem;color:var(--text-muted);">Chế Độ (A/B)</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ── CHANGELOG ── -->
+<section id="changelog">
+  <div class="container">
+    <div class="section-label">Lịch Sử Phiên Bản</div>
+    <h2 class="section-title">Changelog</h2>
+    <p class="section-sub">Lịch sử các thay đổi lớn của hệ thống, mới nhất trước.</p>
+    <div class="timeline">
+
+      <div class="timeline-item">
+        <div class="tl-date">2026-05-16 — v5d</div>
+        <div class="tl-title">Senior Hardening + QA Suite Mở Rộng (61 Tests) <span class="badge badge-green">NEW</span></div>
+        <div class="tl-body">
+          <code>claude_code_backend.py</code>: timeout subprocess (<code>AGENT_TIMEOUT_SECONDS</code>=300s),
+          retry loop (1 retry + 5s backoff), model-specific cost tracking (<code>_MODEL_COST_PER_1K_OUTPUT_TOKENS</code>),
+          80% budget soft-warning. <code>task_decompose.py</code>: DFS cycle detection — parse_submit raises ValueError
+          nếu graph phụ thuộc có vòng lặp. <code>graph.py</code>: <code>_drain_message_queue()</code> dọn queue tại
+          terminal nodes. <code>tests/test_graph.py</code>: +20 tests mới — analyser spec_md regression,
+          spec_analyze approval bypass, task cycle (4 cases), queue drain.
+        </div>
+      </div>
+
+      <div class="timeline-item">
+        <div class="tl-date">2026-05-16 — v5c</div>
+        <div class="tl-title">Pre-Release Audit + Docs Sync</div>
+        <div class="tl-body">
+          CLAUDE.md viết lại toàn bộ — 10 agents (8 SDLC + 2 SDD Speckit), adaptive intent pipeline.
+          API Endpoints mở rộng lên 15. Xóa duplicate TypeScript interfaces.
+          FE UI đồng bộ Jira/Linear dark theme + 6 grouped tabs.
+        </div>
+      </div>
+
+      <div class="timeline-item">
+        <div class="tl-date">2026-05-15 — v5b</div>
+        <div class="tl-title">UI/UX Redesign — IMPLEMENTED</div>
+        <div class="tl-body">
+          Jira/Linear dark theme, 6 grouped tabs (Live/Plan/Spec/Code/Quality/Outcome),
+          2-column layout, PipelineBar, ClarificationModal/ApprovalModal sticky,
+          Projects Browser trong sidebar. 54 UI tests pass, build clean.
+        </div>
+      </div>
+
+      <div class="timeline-item">
+        <div class="tl-date">2026-05-15 — v5</div>
+        <div class="tl-title">HTML Presentation Generator + Pipeline History</div>
+        <div class="tl-body">
+          Skill <code>/present</code>, Projects Browser (BE+FE), pipeline diagram bug fixed.
+          69 tests pass, build clean.
+        </div>
+      </div>
+
+      <div class="timeline-item">
+        <div class="tl-date">2026-05-15 — v4</div>
+        <div class="tl-title">SDD Speckit — Full Implementation</div>
+        <div class="tl-body">
+          2 agents mới (SpecAnalyze, TaskDecompose), adaptive graph với intent routing,
+          5 API endpoints mới, frontend SDD/Analysis/Inject tabs, 69 tests pass.
+        </div>
+      </div>
+
+      <div class="timeline-item">
+        <div class="tl-date">2026-05-15 — v2</div>
+        <div class="tl-title">Enhanced SDLC — 8 Agents</div>
+        <div class="tl-body">
+          Thêm Reviewer, Security, Deploy, Retrospective agents. CLAUDE.md/GUIDELINE.md viết lại,
+          bandit+pip-audit, MCP server với clarify tool, 29 tests pass.
+        </div>
+      </div>
+
+      <div class="timeline-item">
+        <div class="tl-date">2026-05-10</div>
+        <div class="tl-title">SQLite Xóa Hoàn Toàn — PostgreSQL Only</div>
+        <div class="tl-body">
+          Chỉ dùng <code>AsyncPostgresSaver</code>
+          <em class="tooltip">— lưu trạng thái vào PostgreSQL sau mỗi bước</em>.
+          Docker Compose stack. QA audit: CORS, idempotency, secret filtering, SSE filter.
+          Windows <code>claude.cmd</code> fix.
+        </div>
+      </div>
+
+      <div class="timeline-item">
+        <div class="tl-date">2026-05-09</div>
+        <div class="tl-title">Initial Build</div>
+        <div class="tl-body">LangGraph + 4 agents + FastAPI + React + MCP Server.</div>
+      </div>
+
+    </div>
+  </div>
+</section>
+
+<!-- ── TỔNG QUAN ── -->
+<section id="overview">
+  <div class="container">
+    <div class="section-label">Tổng Quan</div>
+    <h2 class="section-title">Hệ Thống Là Gì?</h2>
+    <p class="section-sub">AI Orchestrator điều phối 10 agents AI chuyên biệt qua một graph LangGraph
+      <em class="tooltip">— thư viện điều phối AI với checkpoint tự động</em>
+      để tự động hóa toàn bộ vòng đời phát triển phần mềm.</p>
+
+    <div class="stat-tiles">
+      <div class="stat-tile"><div class="stat-num" style="color:var(--purple);">10</div><div class="stat-label">AI Agents</div></div>
+      <div class="stat-tile"><div class="stat-num" style="color:var(--green);">61</div><div class="stat-label">Tests Pass</div></div>
+      <div class="stat-tile"><div class="stat-num" style="color:var(--accent);">15</div><div class="stat-label">API Endpoints</div></div>
+      <div class="stat-tile"><div class="stat-num" style="color:var(--yellow);">5</div><div class="stat-label">Intents</div></div>
+      <div class="stat-tile"><div class="stat-num" style="color:var(--teal);">14</div><div class="stat-label">Graph Nodes</div></div>
+      <div class="stat-tile"><div class="stat-num" style="color:var(--primary);">24h</div><div class="stat-label">Human Gate</div></div>
+    </div>
+
+    <table class="data-table" style="margin-top:1.5rem;">
+      <thead><tr><th>Thành Phần</th><th>Mô Tả</th></tr></thead>
+      <tbody>
+        <tr><td><strong>Tên hệ thống</strong></td><td>AI Orchestrator</td></tr>
+        <tr><td><strong>Mục tiêu</strong></td><td>Tự động hóa quy trình phát triển phần mềm qua 10 AI agents chuyên biệt</td></tr>
+        <tr><td><strong>Kiến trúc</strong></td><td>LangGraph StateGraph — deterministic routing, KHÔNG phải LLM routing</td></tr>
+        <tr><td><strong>Methodology</strong></td><td>SDD — Specification-Driven Development với SDD Speckit integration</td></tr>
+        <tr><td><strong>IDE Integration</strong></td><td>MCP Server Bridge → VS Code (Claude Code hoặc Cline)</td></tr>
+        <tr><td><strong>Frontend</strong></td><td>React 18 + Vite + TypeScript + Tailwind CSS — dark theme, SSE real-time</td></tr>
+        <tr><td><strong>Ngôn ngữ</strong></td><td>Python 3.11+ (backend + MCP) · TypeScript/React (frontend)</td></tr>
+        <tr><td><strong>Checkpoint</strong></td><td>AsyncPostgresSaver <em class="tooltip">— lưu trạng thái vào PostgreSQL sau mỗi bước</em> — resume on crash</td></tr>
+      </tbody>
+    </table>
+
+    <div style="margin-top:2rem;">
+      <h3 style="color:var(--text);font-size:1.1rem;margin-bottom:1rem;">Definition of Done — KPIs</h3>
+      <table class="data-table">
+        <thead><tr><th>Metric</th><th>Target</th></tr></thead>
+        <tbody>
+          <tr><td>QA pass rate lần đầu (first-pass)</td><td><span class="badge badge-green">≥ 60%</span></td></tr>
+          <tr><td>Latency full pipeline run</td><td><span class="badge badge-blue">&lt; 5 phút (Mode A, project nhỏ)</span></td></tr>
+          <tr><td>Cost per run (Mode A)</td><td><span class="badge badge-yellow">&lt; $0.20 với caching</span></td></tr>
+          <tr><td>Resume thành công sau crash</td><td><span class="badge badge-green">100% — checkpoint sau mỗi node</span></td></tr>
+          <tr><td>Human Gate response time</td><td><span class="badge badge-purple">Tối đa 24h trước khi auto-expire</span></td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</section>
+
+<!-- ── PIPELINE ── -->
+<section id="pipeline">
+  <div class="container">
+    <div class="section-label">Quy Trình</div>
+    <h2 class="section-title">Pipeline Flow — 10 Nodes</h2>
+    <p class="section-sub">
+      LangGraph <em class="tooltip">— thư viện điều phối AI với checkpoint tự động</em>
+      điều phối 14 nodes với routing Python thuần — không có LLM quyết định luồng.
+      Deterministic, testable, auditable.
+    </p>
+
+    <!-- Pipeline nodes row -->
+    <div class="highlight-box" style="padding:1.5rem;">
+      <div style="font-size:0.8rem;color:var(--text-muted);margin-bottom:1rem;text-align:center;">
+        Feature Intent — Full SDD Flow
+      </div>
+      <div class="pipeline-row">
+        <div class="pipe-node"><div class="pipe-icon node-pm">🧠</div><div class="pipe-label">PM</div></div>
+        <div class="pipe-arrow"></div>
+        <div class="pipe-node"><div class="pipe-icon node-analyse">🔬</div><div class="pipe-label">Analyser</div></div>
+        <div class="pipe-arrow"></div>
+        <div class="pipe-node"><div class="pipe-icon node-spec">📋</div><div class="pipe-label">Spec Analyze</div></div>
+        <div class="pipe-arrow"></div>
+        <div class="pipe-node"><div class="pipe-icon node-gate">🚦</div><div class="pipe-label">Human Gate</div></div>
+        <div class="pipe-arrow"></div>
+        <div class="pipe-node"><div class="pipe-icon node-task">📊</div><div class="pipe-label">Task Decompose</div></div>
+        <div class="pipe-arrow"></div>
+        <div class="pipe-node"><div class="pipe-icon node-eng">⚙️</div><div class="pipe-label">Engineer</div></div>
+        <div class="pipe-arrow"></div>
+        <div class="pipe-node"><div class="pipe-icon node-review">🔍</div><div class="pipe-label">Reviewer</div></div>
+        <div class="pipe-arrow"></div>
+        <div class="pipe-node"><div class="pipe-icon node-sec">🛡️</div><div class="pipe-label">Security</div></div>
+        <div class="pipe-arrow"></div>
+        <div class="pipe-node"><div class="pipe-icon node-qa">✅</div><div class="pipe-label">QA</div></div>
+        <div class="pipe-arrow"></div>
+        <div class="pipe-node"><div class="pipe-icon node-deploy">🚀</div><div class="pipe-label">Deploy</div></div>
+        <div class="pipe-arrow"></div>
+        <div class="pipe-node"><div class="pipe-icon node-retro">📚</div><div class="pipe-label">Retro</div></div>
+        <div class="pipe-arrow"></div>
+        <div class="pipe-node"><div class="pipe-icon node-done">🏆</div><div class="pipe-label">DONE</div></div>
+      </div>
+    </div>
+
+    <div style="margin-top:1.5rem;">
+      <div class="highlight-box">
+        <h3>⚡ Nguyên Tắc Cốt Lõi: Control Plane Is Dumb</h3>
+        <p style="color:var(--text-muted);margin-top:0.5rem;">
+          Routing là các Python function trong <code>conditional_edges</code> của LangGraph — không có LLM nào quyết định node tiếp theo.
+          <strong style="color:var(--text);">Deterministic, testable, auditable.</strong>
+          Mọi thất bại đều được route qua Retrospective trước khi đến terminal node FAILED.
+        </p>
+      </div>
+    </div>
+
+    <div style="margin-top:2rem;">
+      <h3 style="color:var(--text);font-size:1.1rem;margin-bottom:1rem;">Routing Logic Summary</h3>
+      <table class="data-table">
+        <thead><tr><th>Routing Function</th><th>Điều Kiện</th><th>Đích</th></tr></thead>
+        <tbody>
+          <tr><td><code>route_pm</code></td><td>needs_clarification = true</td><td>clarification_gate</td></tr>
+          <tr><td><code>route_pm</code></td><td>else</td><td>analyser</td></tr>
+          <tr><td><code>route_analyser</code></td><td>intent = query</td><td>done</td></tr>
+          <tr><td><code>route_analyser</code></td><td>intent = feature</td><td>spec_analyze</td></tr>
+          <tr><td><code>route_spec_analyze</code></td><td>approved = true (0 CRITICAL/HIGH)</td><td>task_decompose → human_gate</td></tr>
+          <tr><td><code>route_spec_analyze</code></td><td>not approved, revision_count &lt; 2</td><td>analyser (re-plan)</td></tr>
+          <tr><td><code>route_reviewer</code></td><td>fail, iteration &lt; 3</td><td>engineer</td></tr>
+          <tr><td><code>route_security</code></td><td>fail</td><td>retrospective</td></tr>
+          <tr><td><code>route_security</code></td><td>warn</td><td>qa (pass-through)</td></tr>
+          <tr><td><code>route_qa</code></td><td>fail-minor, iteration &lt; 3</td><td>engineer</td></tr>
+          <tr><td><code>route_qa</code></td><td>fail-major, qa_analyser_iter &lt; 2</td><td>analyser</td></tr>
+          <tr><td><code>route_retrospective</code></td><td>deploy pass</td><td>done</td></tr>
+          <tr><td><code>route_retrospective</code></td><td>else</td><td>failed</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</section>
+
+<!-- ── AGENTS ── -->
+<section id="agents">
+  <div class="container">
+    <div class="section-label">Tác Nhân AI</div>
+    <h2 class="section-title">10 AI Agents Chuyên Biệt</h2>
+    <p class="section-sub">8 SDLC agents + 2 SDD Speckit agents. Mỗi agent có system_prompt riêng, tool schema, và parse_submit logic.</p>
+
+    <table class="data-table">
+      <thead><tr><th>Agent</th><th>Vai Trò</th><th>Output</th><th>Mode</th><th>Model (A)</th></tr></thead>
+      <tbody>
+        <tr>
+          <td><strong>PM</strong> <span class="badge badge-purple">SDLC</span></td>
+          <td>Phân loại intent, viết spec.md, định nghĩa DoD, flag ambiguity</td>
+          <td>tasks[], spec_md, needs_clarification</td>
+          <td>Text-only</td>
+          <td>Haiku 4.5</td>
+        </tr>
+        <tr>
+          <td><strong>Analyser</strong> <span class="badge badge-blue">SDLC</span></td>
+          <td>Viết technical spec + plan.md theo intent (feature/query/test/review/bug_fix)</td>
+          <td>spec, plan_md, spec_md</td>
+          <td>Text-only</td>
+          <td>Opus 4.7</td>
+        </tr>
+        <tr>
+          <td><strong>SpecAnalyze</strong> <span class="badge badge-yellow">SDD</span></td>
+          <td>5-pass cross-artifact validation (duplication/ambiguity/underspec/constitution/coverage)</td>
+          <td>spec_analysis {findings, approved}</td>
+          <td>Text-only</td>
+          <td>Sonnet 4.6</td>
+        </tr>
+        <tr>
+          <td><strong>TaskDecompose</strong> <span class="badge badge-yellow">SDD</span></td>
+          <td>Dependency-ordered task graph, 4 phases, parallel markers, cycle detection</td>
+          <td>tasks[], tasks_md</td>
+          <td>Text-only</td>
+          <td>Haiku 4.5</td>
+        </tr>
+        <tr>
+          <td><strong>Engineer</strong> <span class="badge badge-purple">SDLC</span></td>
+          <td>Implement code theo spec. Viết files vào projects/&lt;name&gt;/ bằng file tools</td>
+          <td>artifact_paths, project_dir</td>
+          <td>Shell 🔒</td>
+          <td>Sonnet 4.6</td>
+        </tr>
+        <tr>
+          <td><strong>Reviewer</strong> <span class="badge badge-purple">SDLC</span></td>
+          <td>Code review: design, correctness, maintainability so với spec</td>
+          <td>code_review_report {pass|fail}</td>
+          <td>Text-only</td>
+          <td>Haiku 4.5</td>
+        </tr>
+        <tr>
+          <td><strong>Security</strong> <span class="badge badge-red">SDLC</span></td>
+          <td>Chạy bandit + pip-audit; phân loại pass/warn/fail</td>
+          <td>security_report {pass|warn|fail}</td>
+          <td>Shell 🔒</td>
+          <td>Sonnet 4.6</td>
+        </tr>
+        <tr>
+          <td><strong>QA</strong> <span class="badge badge-green">SDLC</span></td>
+          <td>Validate theo spec + DoD, chạy tests, báo cáo defects</td>
+          <td>test_report {pass|fail-minor|fail-major}</td>
+          <td>Shell 🔒</td>
+          <td>Sonnet 4.6</td>
+        </tr>
+        <tr>
+          <td><strong>Deploy</strong> <span class="badge badge-teal">SDLC</span></td>
+          <td>Cài deps, start server port 9000, smoke test với curl</td>
+          <td>deploy_report {pass|fail}</td>
+          <td>Shell 🔒</td>
+          <td>Sonnet 4.6</td>
+        </tr>
+        <tr>
+          <td><strong>Retrospective</strong> <span class="badge badge-purple">SDLC</span></td>
+          <td>Phân tích toàn bộ history + reports, output lessons learned — luôn chạy</td>
+          <td>retrospective {what_worked, lessons, metrics}</td>
+          <td>Text-only</td>
+          <td>Haiku 4.5</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <div class="highlight-box" style="margin-top:1.5rem;">
+      <h3>🔒 Shell vs Text-Only Mode (Mode B)</h3>
+      <p style="color:var(--text-muted);margin-top:0.5rem;">
+        <strong style="color:var(--red);">Shell agents</strong> (engineer, qa, security, deploy) chạy với
+        <code>--dangerously-skip-permissions</code> và cwd=project_dir — có thể đọc/ghi files.<br>
+        <strong style="color:var(--green);">Text-only agents</strong> (pm, analyser, reviewer, retrospective, spec_analyze, task_decompose) chạy với
+        <code>--tools ""</code> — chỉ output text, không có tool access.
+      </p>
+    </div>
+  </div>
+</section>
+
+<!-- ── INTENTS ── -->
+<section id="intents">
+  <div class="container">
+    <div class="section-label">Mục Đích Pipeline</div>
+    <h2 class="section-title">5 Adaptive Intent Modes</h2>
+    <p class="section-sub">PM phân loại intent của request, graph route theo path tối ưu — không chạy agents không cần thiết.</p>
+
+    <div class="intent-grid">
+      <div class="intent-card" style="border-color:rgba(6,182,212,0.3);">
+        <div class="intent-tag" style="color:var(--accent);">🔍 query</div>
+        <div class="intent-agents">PM → Analyser (Q&A) → <strong>DONE</strong></div>
+        <div style="font-size:0.75rem;color:var(--text-dim);margin-top:0.4rem;">"What does X do?", "Explain this error"</div>
+      </div>
+      <div class="intent-card" style="border-color:rgba(16,185,129,0.3);">
+        <div class="intent-tag" style="color:var(--green);">🧪 test</div>
+        <div class="intent-agents">PM → Analyser → QA → <strong>DONE</strong></div>
+        <div style="font-size:0.75rem;color:var(--text-dim);margin-top:0.4rem;">"Run tests on X", "Validate the API"</div>
+      </div>
+      <div class="intent-card" style="border-color:rgba(239,68,68,0.3);">
+        <div class="intent-tag" style="color:var(--red);">🐛 bug_fix</div>
+        <div class="intent-agents">PM → Analyser → Engineer → QA → Retro → <strong>DONE</strong></div>
+        <div style="font-size:0.75rem;color:var(--text-dim);margin-top:0.4rem;">"Fix bug X", "This crashes when..."</div>
+      </div>
+      <div class="intent-card" style="border-color:rgba(234,179,8,0.3);">
+        <div class="intent-tag" style="color:var(--yellow);">🔎 review</div>
+        <div class="intent-agents">PM → Reviewer / Security → <strong>DONE</strong></div>
+        <div style="font-size:0.75rem;color:var(--text-dim);margin-top:0.4rem;">"Review the spec", "Code review for X"</div>
+      </div>
+      <div class="intent-card" style="border-color:rgba(99,102,241,0.3);">
+        <div class="intent-tag" style="color:var(--primary);">✨ feature</div>
+        <div class="intent-agents">Full SDD Pipeline — tất cả 10 nodes</div>
+        <div style="font-size:0.75rem;color:var(--text-dim);margin-top:0.4rem;">"Build X", "Add Y feature", "Implement Z"</div>
+      </div>
+    </div>
+
+    <div style="margin-top:2rem;">
+      <h3 style="color:var(--text);font-size:1.1rem;margin-bottom:1rem;">SDD Speckit — 5-Pass Spec Validation</h3>
+      <div class="cards-3">
+        <div class="card">
+          <div class="card-icon">🔄</div>
+          <div class="card-title">Pass 1 — Duplication</div>
+          <div class="card-body">Tìm định nghĩa chồng chéo hoặc mâu thuẫn giữa các artifacts.</div>
+        </div>
+        <div class="card">
+          <div class="card-icon">❓</div>
+          <div class="card-title">Pass 2 — Ambiguity</div>
+          <div class="card-body">Tìm statements quá mơ hồ để implement — "handle errors appropriately" không có error codes.</div>
+        </div>
+        <div class="card">
+          <div class="card-icon">🕳️</div>
+          <div class="card-title">Pass 3 — Under-spec</div>
+          <div class="card-body">Tìm gaps để lại quyết định cho engineer — missing pagination, no rate limiting policy.</div>
+        </div>
+        <div class="card">
+          <div class="card-icon">📜</div>
+          <div class="card-title">Pass 4 — Constitution</div>
+          <div class="card-body">Verify mọi quyết định spec tuân theo immutable project principles.</div>
+        </div>
+        <div class="card">
+          <div class="card-icon">📊</div>
+          <div class="card-title">Pass 5 — Coverage</div>
+          <div class="card-body">Verify spec cover tất cả user requirements — mỗi AC maps to ít nhất một task.</div>
+        </div>
+        <div class="card" style="border-color:rgba(239,68,68,0.3);">
+          <div class="card-icon">🛡️</div>
+          <div class="card-title">Server-Side Validation</div>
+          <div class="card-body">Agent không thể tự claim <code>approved=True</code> khi có CRITICAL/HIGH finding. Server override.</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ── TECH STACK ── -->
+<section id="tech">
+  <div class="container">
+    <div class="section-label">Công Nghệ</div>
+    <h2 class="section-title">Technology Stack</h2>
+    <p class="section-sub">Stack được chọn để tối ưu async performance, checkpoint reliability, và developer experience.</p>
+
+    <div class="cards-2">
+      <div>
+        <h3 style="color:var(--text);font-size:1rem;margin-bottom:1rem;">Backend</h3>
+        <table class="data-table">
+          <thead><tr><th>Layer</th><th>Công Nghệ</th><th>Lý Do</th></tr></thead>
+          <tbody>
+            <tr><td>Runtime</td><td>Python 3.11+</td><td>Async, AI/ML ecosystem</td></tr>
+            <tr><td>Orchestration</td><td><strong>LangGraph</strong></td><td>Interrupt/checkpoint/resume built-in</td></tr>
+            <tr><td>API Framework</td><td>FastAPI <em class="tooltip">— web framework Python hiệu năng cao</em></td><td>Async native, SSE <em class="tooltip">— Server-Sent Events: stream sự kiện thời gian thực</em></td></tr>
+            <tr><td>MCP Server</td><td>FastMCP (Python)</td><td>~60 dòng, auto Pydantic schema</td></tr>
+            <tr><td>Checkpoint</td><td>AsyncPostgresSaver</td><td>Concurrent jobs, durability, async-native</td></tr>
+            <tr><td>Container</td><td>Docker + Compose</td><td>Multi-stage build (Node→Python), Postgres 16-alpine</td></tr>
+            <tr><td>Observability</td><td>Langfuse (open-source)</td><td>Traces, cost, latency per agent</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div>
+        <h3 style="color:var(--text);font-size:1rem;margin-bottom:1rem;">Frontend</h3>
+        <table class="data-table">
+          <thead><tr><th>Layer</th><th>Công Nghệ</th></tr></thead>
+          <tbody>
+            <tr><td>Framework</td><td>React 18 + TypeScript + Vite</td></tr>
+            <tr><td>Styling</td><td>Tailwind CSS — Jira/Linear dark theme</td></tr>
+            <tr><td>Real-time</td><td>SSE consumer (EventSource API)</td></tr>
+            <tr><td>State</td><td>usePipeline hook — state machine</td></tr>
+            <tr><td>Build</td><td>npm run build → static, served by FastAPI</td></tr>
+          </tbody>
+        </table>
+        <h3 style="color:var(--text);font-size:1rem;margin-bottom:1rem;margin-top:1.5rem;">Models (Mode A)</h3>
+        <table class="data-table">
+          <thead><tr><th>Agent</th><th>Model</th><th>Output Cost/1K</th></tr></thead>
+          <tbody>
+            <tr><td>PM, Reviewer, Retrospective, TaskDecompose</td><td>Haiku 4.5</td><td>$0.00125</td></tr>
+            <tr><td>Engineer, Security, QA, Deploy, SpecAnalyze</td><td>Sonnet 4.6</td><td>$0.015</td></tr>
+            <tr><td>Analyser</td><td>Opus 4.7</td><td>$0.075</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <div style="margin-top:2rem;">
+      <h3 style="color:var(--text);font-size:1rem;margin-bottom:1rem;">Dual-Mode Strategy</h3>
+      <table class="data-table">
+        <thead><tr><th></th><th>Mode A (Anthropic API)</th><th>Mode B (Claude Code CLI)</th></tr></thead>
+        <tbody>
+          <tr><td><strong>ENV</strong></td><td><code>AI_BACKEND=api</code></td><td><code>AI_BACKEND=claude_code</code></td></tr>
+          <tr><td><strong>Auth</strong></td><td>ANTHROPIC_API_KEY</td><td>Pro subscription session</td></tr>
+          <tr><td><strong>Cost/run</strong></td><td>~$0.09–0.18</td><td>$0 thêm</td></tr>
+          <tr><td><strong>Background 24/7</strong></td><td>✅ Có</td><td>❌ Cần session mở</td></tr>
+          <tr><td><strong>Submit protocol</strong></td><td>Formal tool call</td><td><code>&lt;submit&gt;</code> JSON block</td></tr>
+          <tr><td><strong>Hardening (v5d)</strong></td><td>—</td><td>Timeout 300s, retry 1x, cost tracking</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</section>
+
+<!-- ── API & MCP ── -->
+<section id="api">
+  <div class="container">
+    <div class="section-label">API &amp; MCP</div>
+    <h2 class="section-title">REST API + MCP Server</h2>
+    <p class="section-sub">FastAPI backend với 15 endpoints. MCP Server bridge cho VS Code/Cline integration.</p>
+
+    <div class="cards-2">
+      <div>
+        <h3 style="color:var(--text);font-size:1rem;margin-bottom:1rem;">REST API Endpoints</h3>
+        <table class="data-table">
+          <thead><tr><th>Method</th><th>Path</th><th>Mục Đích</th></tr></thead>
+          <tbody>
+            <tr><td><span class="badge badge-green">POST</span></td><td><code>/run-pipeline</code></td><td>Khởi động pipeline mới</td></tr>
+            <tr><td><span class="badge badge-green">POST</span></td><td><code>/approve-spec</code></td><td>Resume sau human_gate</td></tr>
+            <tr><td><span class="badge badge-green">POST</span></td><td><code>/clarify/{job_id}</code></td><td>Submit PM clarification answers</td></tr>
+            <tr><td><span class="badge badge-green">POST</span></td><td><code>/resume/{job_id}</code></td><td>Resume sau crash/restart</td></tr>
+            <tr><td><span class="badge badge-green">POST</span></td><td><code>/cancel/{job_id}</code></td><td>Hủy pipeline đang chạy</td></tr>
+            <tr><td><span class="badge badge-blue">GET</span></td><td><code>/status/{job_id}</code></td><td>Poll trạng thái job</td></tr>
+            <tr><td><span class="badge badge-blue">GET</span></td><td><code>/stream/{job_id}</code></td><td>SSE live event stream</td></tr>
+            <tr><td><span class="badge badge-blue">GET</span></td><td><code>/jobs</code></td><td>List recent jobs</td></tr>
+            <tr><td><span class="badge badge-green">POST</span></td><td><code>/inject/{job_id}</code></td><td>Queue user message mid-run</td></tr>
+            <tr><td><span class="badge badge-green">POST</span></td><td><code>/modify-spec/{job_id}</code></td><td>Cập nhật spec_md/plan_md</td></tr>
+            <tr><td><span class="badge badge-blue">GET</span></td><td><code>/artifact/{job_id}/{file}</code></td><td>Download SDD artifact</td></tr>
+            <tr><td><span class="badge badge-green">POST</span></td><td><code>/pause/{job_id}</code></td><td>Pause sau node hiện tại</td></tr>
+            <tr><td><span class="badge badge-blue">GET</span></td><td><code>/projects</code></td><td>List tất cả projects</td></tr>
+            <tr><td><span class="badge badge-blue">GET</span></td><td><code>/projects/{name}/runs</code></td><td>Lịch sử runs của project</td></tr>
+            <tr><td><span class="badge badge-blue">GET</span></td><td><code>/projects/{name}/runs/{id}</code></td><td>Snapshot một run cụ thể</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div>
+        <h3 style="color:var(--text);font-size:1rem;margin-bottom:1rem;">MCP Server Tools &amp; Resources</h3>
+        <table class="data-table">
+          <thead><tr><th>Type</th><th>Tên</th><th>Mô Tả</th></tr></thead>
+          <tbody>
+            <tr><td><span class="badge badge-purple">Tool</span></td><td><code>run_pipeline</code></td><td>Trigger pipeline → job_id</td></tr>
+            <tr><td><span class="badge badge-purple">Tool</span></td><td><code>get_job_status</code></td><td>Trạng thái hiện tại của job</td></tr>
+            <tr><td><span class="badge badge-purple">Tool</span></td><td><code>approve_spec</code></td><td>Approve/reject tại Human Gate</td></tr>
+            <tr><td><span class="badge badge-purple">Tool</span></td><td><code>cancel_job</code></td><td>Hủy pipeline đang chạy</td></tr>
+            <tr><td><span class="badge badge-purple">Tool</span></td><td><code>clarify_job</code></td><td>Submit PM clarification answers</td></tr>
+            <tr><td><span class="badge badge-blue">Resource</span></td><td><code>project_spec/{id}</code></td><td>Đọc TechnicalSpec</td></tr>
+            <tr><td><span class="badge badge-blue">Resource</span></td><td><code>test_report/{id}</code></td><td>Kết quả QA</td></tr>
+            <tr><td><span class="badge badge-blue">Resource</span></td><td><code>agent_logs/{id}</code></td><td>Log chi tiết từng agent</td></tr>
+          </tbody>
+        </table>
+
+        <div class="highlight-box" style="margin-top:1.5rem;">
+          <h3>🔑 job_id = thread_id</h3>
+          <p style="color:var(--text-muted);margin-top:0.5rem;font-size:0.85rem;">
+            <code>run_pipeline</code> tạo <code>job_id</code> (UUID), pass làm <code>thread_id</code> vào LangGraph config.
+            Mọi API call sau đó dùng <code>job_id</code> để lookup đúng checkpoint trong PostgreSQL.
+            <strong style="color:var(--text);">job_id = thread_id = checkpoint key.</strong>
+          </p>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ── RISKS ── -->
+<section id="risks">
+  <div class="container">
+    <div class="section-label">Rủi Ro &amp; Giới Hạn</div>
+    <h2 class="section-title">Giới Hạn &amp; Rủi Ro</h2>
+    <p class="section-sub">Các rủi ro đã được identify và mitigation strategy tương ứng.</p>
+
+    <table class="data-table">
+      <thead><tr><th>Rủi Ro</th><th>Mức Độ</th><th>Giải Pháp</th></tr></thead>
+      <tbody>
+        <tr>
+          <td>QA→Engineer / QA→Analyser loop vô tận</td>
+          <td><span class="badge badge-red">Cao</span></td>
+          <td><code>MAX_QA_ITERATIONS=3</code>, <code>MAX_QA_ANALYSER_ITERATIONS=2</code> → FAILED state</td>
+        </tr>
+        <tr>
+          <td>Human Gate không có người approve</td>
+          <td><span class="badge badge-red">Cao</span></td>
+          <td>Auto-expire sau <code>HUMAN_GATE_TIMEOUT_HOURS=24</code>, job → FAILED</td>
+        </tr>
+        <tr>
+          <td>Prompt injection qua MCP</td>
+          <td><span class="badge badge-red">Cao</span></td>
+          <td>Sanitize input, whitelist actions trước khi forward</td>
+        </tr>
+        <tr>
+          <td>Silent failure (hết iteration báo DONE)</td>
+          <td><span class="badge badge-red">Cao</span></td>
+          <td>FAILED terminal state riêng, route qua Retrospective</td>
+        </tr>
+        <tr>
+          <td>Agent subprocess timeout (treo mãi)</td>
+          <td><span class="badge badge-yellow">Trung Bình</span></td>
+          <td><code>AGENT_TIMEOUT_SECONDS=300</code> — tự kill subprocess sau 5 phút <span class="badge badge-green">v5d</span></td>
+        </tr>
+        <tr>
+          <td>Transient subprocess failures</td>
+          <td><span class="badge badge-yellow">Trung Bình</span></td>
+          <td>Retry 1 lần + 5s backoff trước khi raise error <span class="badge badge-green">v5d</span></td>
+        </tr>
+        <tr>
+          <td>Cost vượt ngân sách (Mode A)</td>
+          <td><span class="badge badge-yellow">Trung Bình</span></td>
+          <td>Token budget per agent, warn 80%, hard fail tại 100% <span class="badge badge-green">v5d</span></td>
+        </tr>
+        <tr>
+          <td>spec_analyze hallucinate approved=True</td>
+          <td><span class="badge badge-yellow">Trung Bình</span></td>
+          <td>Server-side override: CRITICAL/HIGH findings → force approved=False <span class="badge badge-green">v5c</span></td>
+        </tr>
+        <tr>
+          <td>Task dependency cycle trong task_decompose</td>
+          <td><span class="badge badge-yellow">Trung Bình</span></td>
+          <td>DFS cycle detection — parse_submit raises ValueError <span class="badge badge-green">v5d</span></td>
+        </tr>
+        <tr>
+          <td>Job registry (_jobs) mất khi restart</td>
+          <td><span class="badge badge-yellow">Trung Bình</span></td>
+          <td>LangGraph state trong Postgres OK — dùng <code>POST /resume/{job_id}</code></td>
+        </tr>
+        <tr>
+          <td>Stale message queue tại terminal nodes</td>
+          <td><span class="badge badge-blue">Thấp</span></td>
+          <td><code>_drain_message_queue()</code> gọi trong handle_done + handle_failed <span class="badge badge-green">v5d</span></td>
+        </tr>
+        <tr>
+          <td>Mode B throttle (Pro subscription limit)</td>
+          <td><span class="badge badge-blue">Thấp</span></td>
+          <td>Monitor usage, switch sang Mode A</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<!-- ── CHI PHÍ ── -->
+<section id="cost">
+  <div class="container">
+    <div class="section-label">Chi Phí</div>
+    <h2 class="section-title">Phân Tích Chi Phí</h2>
+    <p class="section-sub">Ước tính chi phí per-run và monthly. Mode A có tracking tự động từ v5d.</p>
+
+    <div class="cards-2">
+      <div class="card">
+        <div class="card-title" style="color:var(--primary);font-size:1rem;margin-bottom:1rem;">Mode A — Anthropic API (Production)</div>
+        <div class="code-block">
+Ước tính 1 pipeline run:
+  PM        (Haiku 4.5):  ~2K tokens  → ~$0.001
+  Analyser  (Opus 4.7):   ~8K tokens  → ~$0.120
+  Engineer  (Sonnet 4.6): ~15K tokens → ~$0.045
+  QA        (Sonnet 4.6): ~5K tokens  → ~$0.015
+  ─────────────────────────────────────
+  Tổng:                   ~30K tokens → ~$0.18/run
+
+Với prompt caching (system prompt cached):
+  Tiết kiệm ~60-70% phần Analyser
+  → ~$0.09-0.12/run
+
+Ước tính tháng (50 runs): ~$5-9/tháng
+        </div>
+      </div>
+      <div>
+        <div class="card" style="margin-bottom:1rem;">
+          <div class="card-title" style="color:var(--green);font-size:1rem;margin-bottom:0.75rem;">Mode B — Claude Code Pro</div>
+          <div class="card-body">
+            Chi phí: <strong style="color:var(--green);">$20/tháng flat</strong><br>
+            Phù hợp: Dev cá nhân, prototype<br>
+            Giới hạn: Cần session mở, không chạy background 24/7
+          </div>
+        </div>
+        <div class="card">
+          <div class="card-title" style="color:var(--accent);font-size:1rem;margin-bottom:0.75rem;">Cost Tracking (v5d)</div>
+          <div class="card-body">
+            Mỗi agent event log: <code>cost=$X.XXXX</code><br>
+            <code>cost_estimate_usd</code> tích lũy trong ProjectContext<br>
+            Model-specific pricing: Opus 5× Sonnet, Haiku 12× rẻ hơn Sonnet<br>
+            80% budget → warning log; 100% → RuntimeError
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ── ROADMAP ── -->
+<section id="roadmap">
+  <div class="container">
+    <div class="section-label">Lộ Trình</div>
+    <h2 class="section-title">Roadmap Implementation</h2>
+    <p class="section-sub">Lịch sử triển khai theo phases — từ MVP đến production hardening.</p>
+
+    <div class="cards-2">
+      <div>
+        <h3 style="color:var(--text);font-size:1rem;margin-bottom:1rem;">MVP — Mode A (Tuần 1–8)</h3>
+        <div class="timeline">
+          <div class="timeline-item">
+            <div class="tl-date">Phase 1 — Foundation (Tuần 1–2)</div>
+            <div class="tl-title">ProjectContext + LangGraph Graph + Mock Agents</div>
+            <div class="tl-body">Pipeline chạy end-to-end với mock, checkpoint/resume hoạt động</div>
+          </div>
+          <div class="timeline-item">
+            <div class="tl-date">Phase 2 — PM + API (Tuần 3–4)</div>
+            <div class="tl-title">PM Agent + FastAPI + SSE Streaming</div>
+            <div class="tl-body">Trigger từ API, xem log real-time, Human Gate endpoint</div>
+          </div>
+          <div class="timeline-item">
+            <div class="tl-date">Phase 3 — Full Pipeline (Tuần 5–6)</div>
+            <div class="tl-title">Analyser + Engineer + QA Agents</div>
+            <div class="tl-body">4 agents chạy hoàn chỉnh, QA feedback loop, FAILED state</div>
+          </div>
+          <div class="timeline-item">
+            <div class="tl-date">Phase 4 — MCP + IDE (Tuần 7–8)</div>
+            <div class="tl-title">MCP Server + VS Code Integration</div>
+            <div class="tl-body">Trigger từ VS Code chat, approve spec từ IDE</div>
+          </div>
+        </div>
+      </div>
+      <div>
+        <h3 style="color:var(--text);font-size:1rem;margin-bottom:1rem;">Enhancement &amp; Production</h3>
+        <div class="timeline">
+          <div class="timeline-item">
+            <div class="tl-date">Phase 5 — UI (Tuần 9–10)</div>
+            <div class="tl-title">React Dashboard + Langfuse</div>
+            <div class="tl-body">Full state tracking, cost dashboard, real-time SSE timeline</div>
+          </div>
+          <div class="timeline-item">
+            <div class="tl-date">Phase 6 — Mode B (Tuần 11–12)</div>
+            <div class="tl-title">Claude Code Sub-agent Adapter</div>
+            <div class="tl-body">Mode B hoạt động, switch bằng ENV — không thay graph</div>
+          </div>
+          <div class="timeline-item">
+            <div class="tl-date" style="color:var(--green);">Phase 7 — Production ✅ (2026-05-10)</div>
+            <div class="tl-title">Docker + AsyncPostgresSaver + QA Audit</div>
+            <div class="tl-body">CORS, idempotency, secret filtering, SSE filter. SQLite removed.</div>
+          </div>
+          <div class="timeline-item">
+            <div class="tl-date" style="color:var(--green);">Phase 8 — SDD Speckit ✅ (2026-05-15)</div>
+            <div class="tl-title">10 Agents + Adaptive Intent Pipeline</div>
+            <div class="tl-body">SpecAnalyze, TaskDecompose, 5 intents, Projects Browser, 69 tests.</div>
+          </div>
+          <div class="timeline-item">
+            <div class="tl-date" style="color:var(--primary);">Phase 9 — Hardening ✅ (2026-05-16)</div>
+            <div class="tl-title">Timeout + Retry + Cost Tracking + 61 Tests</div>
+            <div class="tl-body">Subprocess timeout, retry logic, model-specific cost, cycle detection, queue drain.</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Enterprise Checklist -->
+    <div style="margin-top:2rem;">
+      <h3 style="color:var(--text);font-size:1rem;margin-bottom:1rem;">Enterprise Checklist</h3>
+      <div class="cards-3">
+        <div class="card" style="border-color:rgba(16,185,129,0.3);">
+          <div class="card-icon">✅</div>
+          <div class="card-title">Cost Guard</div>
+          <div class="card-body"><code>MAX_TOKENS_PER_AGENT</code> + 80% soft-warning + model-specific pricing</div>
+        </div>
+        <div class="card" style="border-color:rgba(16,185,129,0.3);">
+          <div class="card-icon">✅</div>
+          <div class="card-title">Clarification Loop</div>
+          <div class="card-body">PM flags ambiguous requirements; user answers trước khi Analyser chạy</div>
+        </div>
+        <div class="card" style="border-color:rgba(16,185,129,0.3);">
+          <div class="card-icon">✅</div>
+          <div class="card-title">Human Gate</div>
+          <div class="card-body"><code>interrupt_before=["human_gate"]</code> — waits for spec approval</div>
+        </div>
+        <div class="card" style="border-color:rgba(16,185,129,0.3);">
+          <div class="card-icon">✅</div>
+          <div class="card-title">Security Scanning</div>
+          <div class="card-body">bandit + pip-audit; warn = pass-through, fail = block pipeline</div>
+        </div>
+        <div class="card" style="border-color:rgba(16,185,129,0.3);">
+          <div class="card-icon">✅</div>
+          <div class="card-title">Idempotency</div>
+          <div class="card-body">Checkpoint sau mỗi node; all resume endpoints guard against double-spawn</div>
+        </div>
+        <div class="card" style="border-color:rgba(16,185,129,0.3);">
+          <div class="card-icon">✅</div>
+          <div class="card-title">Secret Filtering</div>
+          <div class="card-body">Subprocess strips CLAUDECODE, DATABASE_URL, ANTHROPIC_API_KEY, LANGFUSE_*</div>
+        </div>
+        <div class="card" style="border-color:rgba(16,185,129,0.3);">
+          <div class="card-icon">✅</div>
+          <div class="card-title">Max Iteration Guards</div>
+          <div class="card-body">QA→Eng ≤3, QA→Analyser ≤2, Spec revision ≤2 — không silent-fail</div>
+        </div>
+        <div class="card" style="border-color:rgba(16,185,129,0.3);">
+          <div class="card-icon">✅</div>
+          <div class="card-title">Artifact Storage</div>
+          <div class="card-body">Engineer ghi vào <code>projects/&lt;name&gt;/</code> — không embed content trong checkpoint</div>
+        </div>
+        <div class="card" style="border-color:rgba(245,158,11,0.3);">
+          <div class="card-icon">⏳</div>
+          <div class="card-title">Job Registry Persistence</div>
+          <div class="card-body">Recover <code>_jobs</code> từ Postgres khi server restart — chưa implement</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <p>🤖 <strong>AI Orchestrator — Kiến Trúc Hệ Thống</strong></p>
+  <p style="margin-top:0.5rem;color:var(--text-dim);">
+    v5d · 2026-05-16 · 10 Agents · 61 Tests · LangGraph + FastAPI + React
+  </p>
+  <p style="margin-top:0.25rem;color:var(--text-dim);">
+    Được tạo bởi AI Orchestrator · SDD — Specification-Driven Development
+  </p>
+</footer>
+
+</body>
+</html>

@@ -14,5 +14,19 @@
   },
   "enabledMcpjsonServers": [
     "ai-orchestrator"
-  ]
+  ],
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Write|Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python -c \"import sys,json; d=json.load(sys.stdin); fp=d.get('tool_input',{}).get('file_path',''); r=json.dumps({'systemMessage':'\\u26a0\\ufe0f SOLUTION.md updated \\u2014 also update SOLUTION.html changelog section.'}) if 'SOLUTION.md' in fp and not 'SOLUTION.html' in fp else ''; print(r) if r else None\" 2>NUL || true",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  }
 }

@@ -36,31 +36,38 @@ services:
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
 
       # Models (Mode A)
-      PM_MODEL:       ${PM_MODEL:-claude-haiku-4-5-20251001}
-      ANALYSER_MODEL: ${ANALYSER_MODEL:-claude-sonnet-4-6}
-      ENGINEER_MODEL: ${ENGINEER_MODEL:-claude-sonnet-4-6}
-      QA_MODEL:       ${QA_MODEL:-claude-sonnet-4-6}
+      PM_MODEL:            ${PM_MODEL:-claude-haiku-4-5-20251001}
+      ANALYSER_MODEL:      ${ANALYSER_MODEL:-claude-sonnet-4-6}
+      ENGINEER_MODEL:      ${ENGINEER_MODEL:-claude-sonnet-4-6}
+      REVIEWER_MODEL:      ${REVIEWER_MODEL:-claude-haiku-4-5-20251001}
+      SECURITY_MODEL:      ${SECURITY_MODEL:-claude-sonnet-4-6}
+      QA_MODEL:            ${QA_MODEL:-claude-sonnet-4-6}
+      DEPLOY_MODEL:        ${DEPLOY_MODEL:-claude-sonnet-4-6}
+      RETROSPECTIVE_MODEL: ${RETROSPECTIVE_MODEL:-claude-haiku-4-5-20251001}
 
       # Models (Mode B)
-      PM_MODEL_B:       ${PM_MODEL_B:-claude-haiku-4-5-20251001}
-      ANALYSER_MODEL_B: ${ANALYSER_MODEL_B:-claude-sonnet-4-6}
-      ENGINEER_MODEL_B: ${ENGINEER_MODEL_B:-claude-sonnet-4-6}
-      QA_MODEL_B:       ${QA_MODEL_B:-claude-sonnet-4-6}
+      PM_MODEL_B:            ${PM_MODEL_B:-claude-haiku-4-5-20251001}
+      ANALYSER_MODEL_B:      ${ANALYSER_MODEL_B:-claude-sonnet-4-6}
+      ENGINEER_MODEL_B:      ${ENGINEER_MODEL_B:-claude-sonnet-4-6}
+      REVIEWER_MODEL_B:      ${REVIEWER_MODEL_B:-claude-haiku-4-5-20251001}
+      SECURITY_MODEL_B:      ${SECURITY_MODEL_B:-claude-sonnet-4-6}
+      QA_MODEL_B:            ${QA_MODEL_B:-claude-sonnet-4-6}
+      DEPLOY_MODEL_B:        ${DEPLOY_MODEL_B:-claude-sonnet-4-6}
+      RETROSPECTIVE_MODEL_B: ${RETROSPECTIVE_MODEL_B:-claude-haiku-4-5-20251001}
 
       # Pipeline limits
       MAX_QA_ITERATIONS:          ${MAX_QA_ITERATIONS:-3}
       MAX_QA_ANALYSER_ITERATIONS: ${MAX_QA_ANALYSER_ITERATIONS:-2}
+      MAX_TOKENS_PER_AGENT:       ${MAX_TOKENS_PER_AGENT:-0}
 
       # Paths (inside container)
-      ARTIFACT_DIR:  /app/artifacts
       PROJECTS_ROOT: /app/projects
 
       LOG_LEVEL:    ${LOG_LEVEL:-INFO}
       CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:8000}
 
     volumes:
-      - ./artifacts:/app/artifacts   # persist generated code
-      - ./projects:/app/projects     # persist spec folders
+      - ./projects:/app/projects     # persist generated code + spec folders
 
     depends_on:
       postgres:

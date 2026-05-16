@@ -2,10 +2,14 @@ import { useEffect, useRef } from "react";
 import type { AgentEvent, SSEEvent } from "../types";
 
 const AGENT_COLOR: Record<string, string> = {
-  pm:       "bg-purple-100 text-purple-700 border-purple-200",
-  analyser: "bg-blue-100 text-blue-700 border-blue-200",
-  engineer: "bg-orange-100 text-orange-700 border-orange-200",
-  qa:       "bg-green-100 text-green-700 border-green-200",
+  pm:          "bg-purple-100 text-purple-700 border-purple-200",
+  analyser:    "bg-blue-100 text-blue-700 border-blue-200",
+  engineer:    "bg-orange-100 text-orange-700 border-orange-200",
+  reviewer:    "bg-yellow-100 text-yellow-700 border-yellow-200",
+  security:    "bg-red-100 text-red-700 border-red-200",
+  qa:          "bg-green-100 text-green-700 border-green-200",
+  deploy:      "bg-teal-100 text-teal-700 border-teal-200",
+  retrospective: "bg-indigo-100 text-indigo-700 border-indigo-200",
 };
 
 const STATUS_ICON: Record<string, string> = {

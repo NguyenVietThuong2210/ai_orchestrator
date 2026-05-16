@@ -142,19 +142,33 @@ cd frontend && npm run build
 | `DATABASE_URL` | **yes** | — | PostgreSQL connection string |
 | `AI_BACKEND` | no | `claude_code` | `claude_code` (Mode B) or `api` (Mode A) |
 | `ANTHROPIC_API_KEY` | Mode A only | — | Anthropic API key |
-| `PM_MODEL_B` | no | `claude-haiku-4-5-20251001` | PM agent model, Mode B |
-| `ANALYSER_MODEL_B` | no | `claude-sonnet-4-6` | Analyser model, Mode B |
-| `ENGINEER_MODEL_B` | no | `claude-sonnet-4-6` | Engineer model, Mode B |
-| `QA_MODEL_B` | no | `claude-sonnet-4-6` | QA model, Mode B |
-| `PM_MODEL` | no | `claude-haiku-4-5-20251001` | PM agent model, Mode A |
-| `ANALYSER_MODEL` | no | `claude-opus-4-7` | Analyser model, Mode A |
-| `ENGINEER_MODEL` | no | `claude-sonnet-4-6` | Engineer model, Mode A |
-| `QA_MODEL` | no | `claude-sonnet-4-6` | QA model, Mode A |
+| **Mode B models** | | | |
+| `PM_MODEL_B` | no | `claude-haiku-4-5-20251001` | PM agent, Mode B |
+| `ANALYSER_MODEL_B` | no | `claude-sonnet-4-6` | Analyser, Mode B |
+| `ENGINEER_MODEL_B` | no | `claude-sonnet-4-6` | Engineer, Mode B |
+| `REVIEWER_MODEL_B` | no | `claude-haiku-4-5-20251001` | Code Reviewer, Mode B |
+| `SECURITY_MODEL_B` | no | `claude-sonnet-4-6` | Security scanner, Mode B |
+| `QA_MODEL_B` | no | `claude-sonnet-4-6` | QA, Mode B |
+| `DEPLOY_MODEL_B` | no | `claude-sonnet-4-6` | Deploy agent, Mode B |
+| `RETROSPECTIVE_MODEL_B` | no | `claude-haiku-4-5-20251001` | Retrospective, Mode B |
+| **Mode A models** | | | |
+| `PM_MODEL` | no | `claude-haiku-4-5-20251001` | PM agent, Mode A |
+| `ANALYSER_MODEL` | no | `claude-opus-4-7` | Analyser, Mode A |
+| `ENGINEER_MODEL` | no | `claude-sonnet-4-6` | Engineer, Mode A |
+| `REVIEWER_MODEL` | no | `claude-haiku-4-5-20251001` | Code Reviewer, Mode A |
+| `SECURITY_MODEL` | no | `claude-sonnet-4-6` | Security scanner, Mode A |
+| `QA_MODEL` | no | `claude-sonnet-4-6` | QA, Mode A |
+| `DEPLOY_MODEL` | no | `claude-sonnet-4-6` | Deploy agent, Mode A |
+| `RETROSPECTIVE_MODEL` | no | `claude-haiku-4-5-20251001` | Retrospective, Mode A |
+| **Pipeline limits** | | | |
 | `MAX_QA_ITERATIONS` | no | `3` | Max Engineer retries before pipeline fails |
 | `MAX_QA_ANALYSER_ITERATIONS` | no | `2` | Max Analyser re-spec cycles before pipeline fails |
-| `ARTIFACT_DIR` | no | `./artifacts` | Directory where Engineer writes files |
-| `PROJECTS_ROOT` | no | `./projects` | Root directory for project + spec folders |
+| `MAX_TOKENS_PER_AGENT` | no | `0` | Token budget per agent turn (0 = disabled) |
+| **Paths** | | | |
+| `PROJECTS_ROOT` | no | `./projects` | Root for generated code + spec folders |
+| **Other** | | | |
 | `LOG_LEVEL` | no | `INFO` | `DEBUG` / `INFO` / `WARNING` |
+| `CORS_ORIGINS` | no | `http://localhost:5173,http://localhost:8000` | Comma-separated allowed origins |
 | `POSTGRES_DB` | Docker only | `orchestrator` | PostgreSQL database name |
 | `POSTGRES_USER` | Docker only | `orchestrator` | PostgreSQL user |
 | `POSTGRES_PASSWORD` | Docker only | — | PostgreSQL password — **change in production** |
@@ -199,12 +213,25 @@ Claude calls `run_pipeline` → streams status → pauses at Human Gate → asks
 
 **Available MCP tools:**
 
-| Tool | What it does |
+| Tool | When to use |
 |---|---|
 | `run_pipeline` | Start a new pipeline with a requirement |
-| `get_job_status` | Check status, read spec, history, test report |
-| `approve_spec` | Approve the Analyser spec → start Engineering |
+| `get_job_status` | Check status + read all agent reports |
+| `clarify_job` | Submit answers when status == `waiting_clarification` |
+| `approve_spec` | Approve spec when status == `waiting_approval` |
 | `cancel_job` | Cancel a running job |
+
+**Available MCP resources:**
+
+| Resource | Contents |
+|---|---|
+| `project_spec/{job_id}` | Analyser TechnicalSpec |
+| `code_review_report/{job_id}` | Reviewer findings |
+| `security_report/{job_id}` | bandit + pip-audit results |
+| `test_report/{job_id}` | QA defects and pass/fail |
+| `deploy_report/{job_id}` | Smoke test result and endpoint |
+| `retrospective/{job_id}` | Lessons learned + metrics |
+| `agent_logs/{job_id}` | Full event history |
 
 ---
 
@@ -213,21 +240,23 @@ Claude calls `run_pipeline` → streams status → pauses at Human Gate → asks
 Open `http://localhost:8000` (production) or `http://localhost:5173` (dev).
 
 ```
-┌─ Header ────────────────────────────────────────────────────────┐
-│  🤖 AI Orchestrator  [job-id]  [PM→Analyser→Review→Eng→QA]  [●] │
-├─ Sidebar (w-60) ──┬─ Timeline (w-72) ──┬─ Right Panel ─────────┤
-│  Requirement form │  Real-time events  │  Tabs:                │
-│  Project path     │  Agent cards       │    Spec Review        │
-│  Stat tiles       │  SSE live feed     │    QA Report          │
-│  PM Task board    │                    │    Artifacts          │
-│                   │                    │  [Sticky Approve bar] │
-└───────────────────┴────────────────────┴───────────────────────┘
+┌─ Header ──────────────────────────────────────────────────────────────────────────────┐
+│  🤖 AI Orchestrator  [job-id]  [PM·Clarify·Analyser·Approve·Eng·Review·Sec·QA·Deploy·Retro]  [●] │
+├─ Sidebar (w-60) ──┬─ Timeline (w-72) ──┬─ Right Panel (flex-1) ─────────────────────┤
+│  Requirement form │  Real-time events  │  Tabs:                                     │
+│  Stat tiles       │  Agent cards       │    Tasks · Spec · Code Review · Security   │
+│  PM Task board    │  SSE live feed     │    Files · QA · Deploy · Retro             │
+│                   │                    │  [Sticky Clarification banner]             │
+│                   │                    │  [Sticky Approve banner]                   │
+└───────────────────┴────────────────────┴────────────────────────────────────────────┘
 ```
 
 **Key interactions:**
-- Enter requirement → **Run ▶** → watch pipeline progress in the timeline
-- When status hits "Needs Review" → right panel auto-switches to Spec Review → click **✓ Approve**
-- After QA completes → right panel auto-switches to QA Report
+- Enter requirement → **Run ▶** → watch 10-step progress bar and timeline
+- If PM has questions → purple **"Awaiting Clarification"** status → answer in the Clarification banner → **Submit**
+- When status hits **"Awaiting Approval"** → right panel auto-switches to Spec tab → click **✓ Approve**
+- After each agent completes → timeline card appears; right panel tabs auto-switch
+- After Deploy → Retrospective runs automatically; **"Done"** status appears
 
 ---
 
@@ -286,35 +315,54 @@ Approve spec? [approve/reject]: approve
 
 ---
 
-## 6. Human Gate — Approval Flow
+## 6. Clarification Gate + Human Gate
 
-The pipeline **always pauses** after the Analyser writes the technical spec. No code is written until you approve.
+The pipeline has **two pause points**:
+
+### 6.1 Clarification Gate (optional — only when requirement is ambiguous)
+
+PM flags `needs_clarification = true` and writes `clarification_questions`. The graph pauses before running Analyser.
 
 ```
-PM → Analyser → ⏸ PAUSE (review here) → Engineer → QA → DONE
+PM → ⏸ PAUSE (clarify here) → Analyser → ...
 ```
 
 | Interface | How pause appears |
 |---|---|
-| **MCP / Claude Code** | Claude presents spec in chat, asks for decision |
-| **Frontend UI** | Status → "Needs Review", right panel switches to Spec Review, sticky Approve banner appears |
-| **REST API** | `GET /status/{job_id}` returns `"status": "waiting_approval"` + full spec |
-| **Python CLI** | Prints spec overview, prompts `[approve/reject]:` |
+| **MCP / Claude Code** | `get_job_status` returns `"status": "waiting_clarification"` + `clarification_questions[]` |
+| **Frontend UI** | Purple **"Awaiting Clarification"** status pill; Clarification banner appears with PM's questions |
+| **REST API** | `GET /status/{job_id}` → `"status": "waiting_clarification"`, `"clarification_questions": [...]` |
 
-### Approve
+**Resume after clarifying:**
+- **MCP:** `clarify_job(job_id, "answers to questions")`
+- **Frontend UI:** type answers in textarea → click **Submit Answers**
+- **REST API:** `POST /clarify/{job_id}` with `{"clarification_context": "..."}`
 
-- **MCP:** say `"approve"` in chat
+### 6.2 Human Gate (always — spec approval)
+
+The pipeline **always pauses** after the Analyser writes the technical spec. No code is written until you approve.
+
+```
+... → Analyser → ⏸ PAUSE (review here) → Engineer → Reviewer → Security → QA → Deploy → Retrospective → DONE
+```
+
+| Interface | How pause appears |
+|---|---|
+| **MCP / Claude Code** | `get_job_status` returns `"status": "waiting_approval"` + full `spec` |
+| **Frontend UI** | Amber **"Awaiting Approval"** status; right panel switches to Spec tab; sticky Approve banner appears |
+| **REST API** | `GET /status/{job_id}` → `"status": "waiting_approval"` + `"spec": {...}` |
+
+**Approve:**
+- **MCP:** `approve_spec(job_id)` or `approve_spec(job_id, "approve")`
 - **Frontend UI:** click **✓ Approve — Start Engineering**
-- **REST API:** `POST /approve-spec` with `{"decision": "approve"}`
-- **Python CLI:** type `approve`
+- **REST API:** `POST /approve-spec` with `{"job_id": "...", "decision": "approve"}`
 
-### Reject
-
-- **MCP:** say `"reject"` — Claude calls `cancel_job`
+**Reject:**
+- **MCP:** `approve_spec(job_id, "reject")`
 - **Frontend UI:** click **✗ Reject**
-- **REST API:** `POST /approve-spec` with `{"decision": "reject"}`
+- **REST API:** `POST /approve-spec` with `{"job_id": "...", "decision": "reject"}`
 
-> The checkpoint is saved at the pause point in PostgreSQL. You can close everything and come back later — the spec is still there.
+> Both checkpoint states are saved in PostgreSQL. You can close everything and come back later.
 
 ---
 
@@ -435,13 +483,23 @@ The `CLAUDECODE` environment variable is set in the parent process, blocking nes
 
 ---
 
+### Pipeline stuck at `waiting_clarification`
+
+The PM has ambiguous requirements and is waiting for your answers.
+
+- **Frontend UI:** type answers in the purple Clarification banner → click **Submit Answers**
+- **REST API:** `POST /clarify/{job_id}` with `{"clarification_context": "your answers"}`
+- **MCP:** call `clarify_job(job_id, "your answers to the questions")`
+
+---
+
 ### Pipeline stuck at `waiting_approval`
 
-The Human Gate is paused, waiting for your approval.
+The Human Gate is paused, waiting for your spec approval.
 
-- **Frontend UI:** click the **✓ Approve** button in the sticky banner
+- **Frontend UI:** click the **✓ Approve** button in the sticky amber banner
 - **REST API:** `POST /approve-spec` with `{"job_id": "...", "decision": "approve"}`
-- **MCP:** say `"approve"` in Claude Code chat
+- **MCP:** `approve_spec(job_id)` in Claude Code chat
 
 ---
 
@@ -458,12 +516,15 @@ Engineer and QA are in a fail loop.
 
 ## Pipeline Status Reference
 
-| Status | Meaning |
-|---|---|
-| `running` | Pipeline is actively executing an agent |
-| `waiting_approval` | Paused at Human Gate — awaiting approval |
-| `done` | All agents completed; artifacts available |
-| `failed` | Max iterations exceeded or unrecoverable error |
+| Status | Meaning | UI color |
+|---|---|---|
+| `idle` | No active job | Gray |
+| `starting` | Submission accepted, PM about to run | Blue |
+| `running` | An agent is actively executing | Blue (pulsing) |
+| `waiting_clarification` | PM has questions — awaiting user answers | Purple (pulsing) |
+| `waiting_approval` | Paused at Human Gate — awaiting spec approval | Amber (pulsing) |
+| `done` | All 8 agents completed; artifacts + retrospective available | Green |
+| `failed` | Max iterations exceeded, security/deploy failed, or unrecoverable error | Red |
 
 ---
 
@@ -476,18 +537,26 @@ Engineer and QA are in a fail loop.
 ```
 Your prompt
     ↓
-[PM Agent]       → breaks requirement into tasks
+[PM Agent]          → tasks + Definition of Done (may pause for clarification)
     ↓
-[Analyser Agent] → writes technical spec
+[Analyser Agent]    → technical spec
     ↓
-[Human Gate]     ← YOU review + approve here
+[Human Gate]        ← YOU review + approve here
     ↓
-[Engineer Agent] → writes all files into projects/hello_django/
+[Engineer Agent]    → writes all files into projects/hello_django/
     ↓
-[QA Agent]       → runs django check, tests view, verifies file structure
+[Reviewer Agent]    → code quality check (text-only)
     ↓
-    ├── pass → DONE ✓
-    └── fail → Engineer retries (up to 3×), then FAILED
+[Security Agent]    → bandit + pip-audit scan
+    ↓
+[QA Agent]          → runs django check, tests view, file structure
+    ↓
+[Deploy Agent]      → installs deps, starts on :9000, smoke-tests curl
+    ↓
+[Retrospective]     → lessons learned document
+    ↓
+    ├── deploy pass → DONE ✓
+    └── any fail   → Retrospective → FAILED (with lessons)
 ```
 
 ### Step 1 — Start the pipeline
@@ -590,9 +659,13 @@ Final API status:
 
 | Step | Agent | `ProjectContext` field updated |
 |---|---|---|
-| 1 | **PM** | `tasks` |
+| 1 | **PM** | `tasks`, `definition_of_done`, `needs_clarification` |
 | 2 | **Analyser** | `spec` |
 | 3 | **Human Gate** | _(no change — checkpoint saved)_ |
-| 4 | **Engineer** | `artifact_paths` |
-| 5 | **QA** | `test_report` |
-| 6 | **Done** | `status = "done"` |
+| 4 | **Engineer** | `artifact_paths`, `project_dir` |
+| 5 | **Reviewer** | `code_review_report` |
+| 6 | **Security** | `security_report` |
+| 7 | **QA** | `test_report` |
+| 8 | **Deploy** | `deploy_report` |
+| 9 | **Retrospective** | `retrospective` |
+| 10 | **Done/Failed** | `status = "done"` or `"failed"` |

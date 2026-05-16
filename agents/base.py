@@ -1,4 +1,4 @@
-"""BaseAgent — shared interface for all four agents."""
+"""BaseAgent — shared interface for all eight agents."""
 from __future__ import annotations
 
 import json
@@ -8,7 +8,7 @@ from orchestrator.context import ProjectContext
 
 
 class BaseAgent(ABC):
-    name: str  # "pm" | "analyser" | "engineer" | "qa"
+    name: str  # "pm"|"analyser"|"engineer"|"reviewer"|"security"|"qa"|"deploy"|"retrospective"
 
     # ── Subclasses must define ────────────────────────────────────────────────
 

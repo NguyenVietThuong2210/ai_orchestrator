@@ -4,8 +4,7 @@ import { useSSE } from "./useSSE";
 import type { JobStatusResponse, PipelineStatus, SSEEvent } from "../types";
 
 const POLL_INTERVAL_MS = 2500;
-const TERMINAL_STATUSES: PipelineStatus[] = ["done", "failed", "waiting_approval"];
-// How often to check /jobs for MCP-started pipelines when the UI is idle
+const TERMINAL_STATUSES: PipelineStatus[] = ["done", "failed", "waiting_approval", "waiting_clarification"];
 const DISCOVER_INTERVAL_MS = 3000;
 
 export interface PipelineState {
@@ -18,10 +17,11 @@ export interface PipelineState {
 
 export interface PipelineActions {
   start: (requirement: string) => Promise<void>;
-  resume: (jobId: string) => void;  // load an existing job by ID into local state
-  rerunFromCheckpoint: () => Promise<void>;  // resume failed pipeline from last checkpoint
+  resume: (jobId: string) => void;
+  rerunFromCheckpoint: () => Promise<void>;
   approve: () => Promise<void>;
   reject: () => Promise<void>;
+  clarify: (text: string) => Promise<void>;
   cancel: () => Promise<void>;
   reset: () => void;
 }
@@ -38,7 +38,6 @@ export function usePipeline(): PipelineState & PipelineActions {
   const [state, setState] = useState<PipelineState>(INITIAL);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  // SSE — active only while running (not during approval wait or terminal states)
   const sseUrl = state.jobId && state.status === "running"
     ? api.streamUrl(state.jobId)
     : null;
@@ -47,9 +46,7 @@ export function usePipeline(): PipelineState & PipelineActions {
     onEvent: useCallback((e: SSEEvent) => {
       setState((prev) => ({ ...prev, sseEvents: [...prev.sseEvents, e] }));
     }, []),
-    onError: useCallback(() => {
-      // SSE errors are surfaced via the reconnect logic in useSSE; no state change here
-    }, []),
+    onError: useCallback(() => {}, []),
   });
 
   const stopPolling = useCallback(() => {
@@ -64,12 +61,7 @@ export function usePipeline(): PipelineState & PipelineActions {
     const poll = async () => {
       try {
         const data = await api.getStatus(jobId);
-        setState((prev) => ({
-          ...prev,
-          status: data.status,
-          jobData: data,
-          error: null,
-        }));
+        setState((prev) => ({ ...prev, status: data.status, jobData: data, error: null }));
         if (TERMINAL_STATUSES.includes(data.status)) {
           stopPolling();
         }
@@ -80,11 +72,10 @@ export function usePipeline(): PipelineState & PipelineActions {
         }));
       }
     };
-    poll(); // immediate first fetch
+    poll();
     pollRef.current = setInterval(poll, POLL_INTERVAL_MS);
   }, [stopPolling]);
 
-  // Start polling when we have a jobId and are in running state
   useEffect(() => {
     if (!state.jobId || state.status !== "running") return;
     startPolling(state.jobId);
@@ -109,7 +100,6 @@ export function usePipeline(): PipelineState & PipelineActions {
     if (!state.jobId) return;
     try {
       await api.approveSpec(state.jobId);
-      // Transition to running — triggers useEffect above to restart polling
       setState((prev) => ({ ...prev, status: "running", error: null, sseEvents: [] }));
     } catch (err) {
       setState((prev) => ({
@@ -121,66 +111,35 @@ export function usePipeline(): PipelineState & PipelineActions {
 
   const reject = useCallback(async () => {
     if (!state.jobId) return;
-    try {
-      await api.rejectSpec(state.jobId);
-    } catch {
-      // Rejection API may error (e.g. 404 if job already gone) — still mark failed locally
-    }
+    try { await api.rejectSpec(state.jobId); } catch { }
     stopPolling();
-    setState((prev) => ({
-      ...prev,
-      status: "failed",
-      error: "Spec rejected — pipeline cancelled.",
-    }));
+    setState((prev) => ({ ...prev, status: "failed", error: "Spec rejected — pipeline cancelled." }));
   }, [state.jobId, stopPolling]);
+
+  const clarify = useCallback(async (text: string) => {
+    if (!state.jobId) return;
+    try {
+      await api.clarify(state.jobId, text);
+      setState((prev) => ({ ...prev, status: "running", error: null, sseEvents: [] }));
+    } catch (err) {
+      setState((prev) => ({
+        ...prev,
+        error: `Clarification failed: ${err instanceof Error ? err.message : String(err)}`,
+      }));
+    }
+  }, [state.jobId]);
 
   const cancel = useCallback(async () => {
     if (!state.jobId) return;
     stopPolling();
-    try {
-      await api.cancelJob(state.jobId);
-    } catch {
-      // Cancel may fail if job already finished — treat as success locally
-    }
+    try { await api.cancelJob(state.jobId); } catch { }
     setState((prev) => ({ ...prev, status: "failed", error: "Pipeline cancelled." }));
   }, [state.jobId, stopPolling]);
-
-  // Auto-discover MCP-started jobs: poll /jobs when idle, load the most recent active one.
-  // Prefers waiting_approval (human gate) over running, to surface the job needing action.
-  useEffect(() => {
-    if (state.status !== "idle") return;
-    const check = async () => {
-      try {
-        const { jobs } = await api.listJobs();
-        // Prefer waiting_approval first (needs human action), then running
-        const active =
-          jobs.find((j) => j.status === "waiting_approval") ??
-          jobs.find((j) => j.status === "running");
-        if (active) {
-          setState({ ...INITIAL, jobId: active.job_id, status: "running" });
-        }
-      } catch {
-        // server may not be ready yet — silently ignore
-      }
-    };
-    check(); // immediate check on mount / when reset to idle
-    const id = setInterval(check, DISCOVER_INTERVAL_MS);
-    return () => clearInterval(id);
-  }, [state.status]);
-
-  const resume = useCallback((jobId: string) => {
-    stopPolling();
-    // Seed local state with the given jobId and "running" so the polling useEffect
-    // fires immediately. The first poll will correct the status to the real value
-    // (e.g. "waiting_approval") returned by the API.
-    setState({ ...INITIAL, jobId, status: "running" });
-  }, [stopPolling]);
 
   const rerunFromCheckpoint = useCallback(async () => {
     if (!state.jobId) return;
     try {
       await api.resumeFromCheckpoint(state.jobId);
-      // Transition to running — triggers polling useEffect
       setState((prev) => ({ ...prev, status: "running", error: null, sseEvents: [] }));
     } catch (err) {
       setState((prev) => ({
@@ -190,10 +149,35 @@ export function usePipeline(): PipelineState & PipelineActions {
     }
   }, [state.jobId]);
 
+  // Auto-discover MCP-started jobs when idle
+  useEffect(() => {
+    if (state.status !== "idle") return;
+    const check = async () => {
+      try {
+        const { jobs } = await api.listJobs();
+        const active =
+          jobs.find((j) => j.status === "waiting_clarification") ??
+          jobs.find((j) => j.status === "waiting_approval") ??
+          jobs.find((j) => j.status === "running");
+        if (active) {
+          setState({ ...INITIAL, jobId: active.job_id, status: "running" });
+        }
+      } catch { }
+    };
+    check();
+    const id = setInterval(check, DISCOVER_INTERVAL_MS);
+    return () => clearInterval(id);
+  }, [state.status]);
+
+  const resume = useCallback((jobId: string) => {
+    stopPolling();
+    setState({ ...INITIAL, jobId, status: "running" });
+  }, [stopPolling]);
+
   const reset = useCallback(() => {
     stopPolling();
     setState(INITIAL);
   }, [stopPolling]);
 
-  return { ...state, start, resume, rerunFromCheckpoint, approve, reject, cancel, reset };
+  return { ...state, start, resume, rerunFromCheckpoint, approve, reject, clarify, cancel, reset };
 }

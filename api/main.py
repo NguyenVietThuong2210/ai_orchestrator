@@ -34,7 +34,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="AI Orchestrator",
-    description="Four-agent pipeline: PM → Analyser → Engineer → QA",
+    description="Eight-agent pipeline: PM → Analyser → Engineer → Reviewer → Security → QA → Deploy → Retrospective",
     version="0.1.0",
     lifespan=lifespan,
 )

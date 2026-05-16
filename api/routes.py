@@ -21,8 +21,13 @@ from uuid import uuid4
 from api.schemas import (
     RunPipelineRequest, RunPipelineResponse,
     ApproveSpecRequest, ApproveSpecResponse,
+    ClarifyRequest, ClarifyResponse,
+    InjectMessageRequest, InjectMessageResponse,
+    ModifySpecRequest, ModifySpecResponse,
+    PauseRequest, PauseResponse,
     JobStatusResponse, CancelJobResponse,
     ResumeJobResponse, JobSummary, JobListResponse,
+    ProjectListResponse, RunListResponse, RunSummary,
 )
 from orchestrator.runner import run_pipeline, resume_pipeline
 from orchestrator.graph import get_app
@@ -95,6 +100,43 @@ async def approve_spec(req: ApproveSpecRequest):
     )
 
 
+@router.post("/clarify/{job_id}", response_model=ClarifyResponse)
+async def clarify_job(job_id: str, req: ClarifyRequest):
+    """
+    Respond to PM clarification questions and resume the pipeline.
+    Called when status == 'waiting_clarification' (graph paused at clarification_gate).
+    """
+    if job_id not in _jobs:
+        _jobs[job_id] = {"status": "unknown", "task": None, "error": None}
+
+    existing = _jobs[job_id].get("task")
+    if existing and not existing.done():
+        return ClarifyResponse(
+            job_id=job_id,
+            status="running",
+            message="Pipeline already resuming — duplicate request ignored",
+        )
+
+    async def _resume() -> None:
+        try:
+            final = await resume_pipeline(job_id, decision=req.clarification_context)
+            _jobs[job_id]["status"] = final.get("status", "done")
+        except asyncio.CancelledError:
+            _jobs[job_id]["status"] = "failed"
+        except Exception as exc:
+            logger.exception("Clarify resume error — job_id=%s", job_id)
+            _jobs[job_id].update({"status": "failed", "error": str(exc)})
+
+    task = asyncio.create_task(_resume(), name=f"clarify-{job_id}")
+    _jobs[job_id]["task"] = task
+
+    return ClarifyResponse(
+        job_id=job_id,
+        status="running",
+        message="Clarification received — pipeline resuming from PM",
+    )
+
+
 @router.get("/status/{job_id}", response_model=JobStatusResponse)
 async def get_status(job_id: str):
     app      = await get_app()
@@ -118,6 +160,8 @@ async def get_status(job_id: str):
         derived_status = state["status"]
     elif job_meta.get("status") == "failed":
         derived_status = "failed"
+    elif current_node == "clarification_gate":
+        derived_status = "waiting_clarification"
     elif current_node == "human_gate":
         derived_status = "waiting_approval"
     elif current_node == "end" and not state:
@@ -144,6 +188,22 @@ async def get_status(job_id: str):
         project_dir=state.get("project_dir"),
         spec_dir=state.get("spec_dir"),
         error=job_meta.get("error"),
+        definition_of_done=state.get("definition_of_done", []),
+        needs_clarification=state.get("needs_clarification", False),
+        clarification_questions=state.get("clarification_questions", []),
+        code_review_report=state.get("code_review_report"),
+        security_report=state.get("security_report"),
+        deploy_report=state.get("deploy_report"),
+        retrospective=state.get("retrospective"),
+        pipeline_intent=state.get("pipeline_intent", "feature"),
+        spec_md=state.get("spec_md", ""),
+        plan_md=state.get("plan_md", ""),
+        tasks_md=state.get("tasks_md", ""),
+        constitution=state.get("constitution", ""),
+        spec_analysis=state.get("spec_analysis"),
+        spec_revision_count=state.get("spec_revision_count", 0),
+        user_message_queue=state.get("user_message_queue", []),
+        interaction_log=state.get("interaction_log", []),
     )
 
 
@@ -230,6 +290,8 @@ async def list_jobs():
             # LangGraph state is the source of truth.
             if state.get("status") in ("done", "failed"):
                 derived = state["status"]
+            elif current_node == "clarification_gate":
+                derived = "waiting_clarification"
             elif current_node == "human_gate":
                 derived = "waiting_approval"
             elif next_nodes:
@@ -306,6 +368,130 @@ async def resume_job(job_id: str):
     )
 
 
+@router.post("/inject/{job_id}", response_model=InjectMessageResponse)
+async def inject_message(job_id: str, req: InjectMessageRequest):
+    """
+    Inject a user message into the running pipeline's message queue.
+    The next agent node will drain and incorporate the message.
+    Works at any pipeline stage — not just approval gate.
+    """
+    from datetime import datetime, timezone
+
+    app    = await get_app()
+    config = {"configurable": {"thread_id": job_id}}
+    snapshot = await app.aget_state(config)
+    if not snapshot.values:
+        raise HTTPException(404, f"job_id {job_id!r} not found")
+
+    state = snapshot.values
+    queue: list[dict] = list(state.get("user_message_queue", []))
+    queue.append({
+        "from_user":    req.message,
+        "target_agent": req.target_agent,
+        "timestamp":    datetime.now(timezone.utc).isoformat(),
+        "job_id":       job_id,
+    })
+
+    # Persist updated queue back to LangGraph checkpoint via update_state
+    await app.aupdate_state(config, {"user_message_queue": queue})
+
+    logger.info("Injected message for job=%s target=%s", job_id, req.target_agent)
+    return InjectMessageResponse(
+        job_id=job_id,
+        status="queued",
+        message=f"Message queued for agent={req.target_agent!r}. Will be processed at next agent turn.",
+        queue_length=len(queue),
+    )
+
+
+@router.post("/modify-spec/{job_id}", response_model=ModifySpecResponse)
+async def modify_spec(job_id: str, req: ModifySpecRequest):
+    """
+    Directly update spec_md or plan_md (e.g. while paused at human_gate).
+    Changes are persisted to the LangGraph checkpoint so the next agent sees them.
+    """
+    app    = await get_app()
+    config = {"configurable": {"thread_id": job_id}}
+    snapshot = await app.aget_state(config)
+    if not snapshot.values:
+        raise HTTPException(404, f"job_id {job_id!r} not found")
+
+    update: dict = {}
+    if req.spec_md is not None:
+        update["spec_md"] = req.spec_md
+    if req.plan_md is not None:
+        update["plan_md"] = req.plan_md
+
+    if not update:
+        return ModifySpecResponse(job_id=job_id, status="no_change", message="No fields to update")
+
+    await app.aupdate_state(config, update)
+    fields = ", ".join(update.keys())
+    logger.info("Spec modified for job=%s fields=%s note=%r", job_id, fields, req.note)
+    return ModifySpecResponse(
+        job_id=job_id,
+        status="updated",
+        message=f"Updated {fields}. Changes will be visible to next agent.",
+    )
+
+
+@router.get("/solution")
+async def serve_solution():
+    """Serve the SOLUTION.html presentation document."""
+    import pathlib
+    from fastapi.responses import FileResponse
+    here = pathlib.Path(__file__).parent.parent  # project root
+    path = here / "SOLUTION.html"
+    if not path.exists():
+        raise HTTPException(404, "SOLUTION.html not found")
+    return FileResponse(path=str(path), media_type="text/html")
+
+
+@router.get("/artifact/{job_id}/{filename}")
+async def get_artifact(job_id: str, filename: str):
+    """Download a generated artifact file for the given job."""
+    import pathlib
+    from fastapi.responses import FileResponse
+
+    app    = await get_app()
+    config = {"configurable": {"thread_id": job_id}}
+    snapshot = await app.aget_state(config)
+    state  = snapshot.values or {}
+
+    artifact_paths: dict[str, str] = state.get("artifact_paths", {})
+    if filename not in artifact_paths:
+        raise HTTPException(404, f"Artifact {filename!r} not found for job {job_id!r}")
+
+    file_path = pathlib.Path(artifact_paths[filename])
+    if not file_path.exists():
+        raise HTTPException(404, f"Artifact file {filename!r} does not exist on disk")
+
+    return FileResponse(path=str(file_path), filename=filename)
+
+
+@router.post("/pause/{job_id}", response_model=PauseResponse)
+async def pause_job(job_id: str, req: PauseRequest):
+    """
+    Request the pipeline to pause before the next agent node.
+    The pause_requested flag is set in the LangGraph checkpoint; the next node
+    will interrupt() before running, allowing the user to inject messages or
+    modify the spec.
+    """
+    app    = await get_app()
+    config = {"configurable": {"thread_id": job_id}}
+    snapshot = await app.aget_state(config)
+    if not snapshot.values:
+        raise HTTPException(404, f"job_id {job_id!r} not found")
+
+    await app.aupdate_state(config, {"pause_requested": True})
+    logger.info("Pause requested for job=%s reason=%r", job_id, req.reason)
+    return PauseResponse(
+        job_id=job_id,
+        status="pause_requested",
+        message="Pipeline will pause before the next agent node. Use POST /approve-spec to resume.",
+    )
+
+
 @router.post("/cancel/{job_id}", response_model=CancelJobResponse)
 async def cancel_job(job_id: str):
     if job_id not in _jobs:
@@ -323,3 +509,30 @@ async def cancel_job(job_id: str):
 
     _jobs[job_id]["status"] = "failed"
     return CancelJobResponse(job_id=job_id, message="Job cancelled")
+
+
+# ── Project History ────────────────────────────────────────────────────────────
+
+@router.get("/projects", response_model=ProjectListResponse)
+async def list_projects():
+    """List all projects grouped from LangGraph checkpoint history."""
+    from api.project_store import list_all_runs, group_by_project
+    runs = await list_all_runs()
+    projects = group_by_project(runs)
+    return ProjectListResponse(projects=projects)
+
+
+@router.get("/projects/{project_name}/runs", response_model=RunListResponse)
+async def list_project_runs(project_name: str):
+    """List all pipeline runs for a specific project, newest first."""
+    from api.project_store import list_all_runs
+    runs = await list_all_runs()
+    filtered = [r for r in runs if r.project_name == project_name]
+    return RunListResponse(project_name=project_name, runs=filtered)
+
+
+@router.get("/projects/{project_name}/runs/{job_id}", response_model=JobStatusResponse)
+async def get_run_snapshot(project_name: str, job_id: str):
+    """Return the full status snapshot of a historical run (read-only archive view)."""
+    # Reuse the existing /status/{job_id} logic
+    return await get_job_status(job_id)

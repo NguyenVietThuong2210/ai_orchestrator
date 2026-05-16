@@ -44,18 +44,44 @@ def _initial_state(requirement: str, job_id: str) -> ProjectContext:
     _write_requirements({**stub, "project_dir": project_dir, "spec_dir": str(spec_d)}, spec_d)  # type: ignore[arg-type]
 
     return {
-        "request":               requirement,
-        "job_id":                job_id,
-        "tasks":                 [],
-        "spec":                  None,
-        "artifact_paths":        {},
-        "test_report":           None,
-        "history":               [],
-        "iteration":             0,
-        "qa_analyser_iteration": 0,
-        "status":                "running",
-        "project_dir":           project_dir,
-        "spec_dir":              str(spec_d),
+        "request":                requirement,
+        "job_id":                 job_id,
+        "tasks":                  [],
+        "spec":                   None,
+        "artifact_paths":         {},
+        "test_report":            None,
+        "history":                [],
+        "iteration":              0,
+        "qa_analyser_iteration":  0,
+        "status":                 "running",
+        "project_dir":            project_dir,
+        "spec_dir":               str(spec_d),
+        # PM clarification
+        "definition_of_done":     [],
+        "needs_clarification":    False,
+        "clarification_questions": [],
+        "clarification_context":  "",
+        # Post-engineering reports
+        "code_review_report":     None,
+        "security_report":        None,
+        "deploy_report":          None,
+        "retrospective":          None,
+        # Adaptive pipeline intent
+        "pipeline_intent":        "feature",
+        # SDD Speckit artifacts
+        "constitution":           "",
+        "spec_md":                "",
+        "plan_md":                "",
+        "tasks_md":               "",
+        "checklist_md":           "",
+        # Spec analysis
+        "spec_analysis":          None,
+        "spec_revision_count":    0,
+        # Multi-point interaction
+        "user_message_queue":     [],
+        "interaction_log":        [],
+        # Pause/resume
+        "pause_requested":        False,
     }
 
 
@@ -112,7 +138,11 @@ async def resume_pipeline(job_id: str, decision: str = "approve") -> ProjectCont
     next_nodes = snapshot.next or ()
 
     # Determine correct resume strategy
-    if "human_gate" in next_nodes:
+    if "clarification_gate" in next_nodes:
+        # Paused waiting for user clarification — decision string is the clarification text
+        logger.info("▶ Resuming at clarification_gate — job_id=%s", job_id)
+        stream_input = Command(resume=decision)
+    elif "human_gate" in next_nodes:
         # Still at the interrupt — send the user's decision
         logger.info("▶ Resuming at human_gate — job_id=%s decision=%s", job_id, decision)
         if decision != "approve":

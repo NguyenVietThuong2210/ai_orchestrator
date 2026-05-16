@@ -13,10 +13,14 @@ from orchestrator.context import ProjectContext
 
 # Per-agent models for Mode A
 DEFAULT_MODELS_A: dict[str, str] = {
-    "pm":       os.getenv("PM_MODEL",       "claude-haiku-4-5-20251001"),
-    "analyser": os.getenv("ANALYSER_MODEL", "claude-opus-4-7"),
-    "engineer": os.getenv("ENGINEER_MODEL", "claude-sonnet-4-6"),
-    "qa":       os.getenv("QA_MODEL",       "claude-sonnet-4-6"),
+    "pm":            os.getenv("PM_MODEL",            "claude-haiku-4-5-20251001"),
+    "analyser":      os.getenv("ANALYSER_MODEL",      "claude-opus-4-7"),
+    "engineer":      os.getenv("ENGINEER_MODEL",      "claude-sonnet-4-6"),
+    "reviewer":      os.getenv("REVIEWER_MODEL",      "claude-haiku-4-5-20251001"),
+    "security":      os.getenv("SECURITY_MODEL",      "claude-sonnet-4-6"),
+    "qa":            os.getenv("QA_MODEL",            "claude-sonnet-4-6"),
+    "deploy":        os.getenv("DEPLOY_MODEL",        "claude-sonnet-4-6"),
+    "retrospective": os.getenv("RETROSPECTIVE_MODEL", "claude-haiku-4-5-20251001"),
 }
 
 
